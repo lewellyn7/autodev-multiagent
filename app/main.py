@@ -104,7 +104,11 @@ app.add_middleware(
 app.add_middleware(RateLimitMiddleware)
 
 db.init_db()
-templates = Jinja2Templates(directory="app/templates")
+import os
+import os
+# Absolute path: templates are at /app/app/templates in Docker, ./app/templates locally
+TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
 # =============================================================================
 # Dependencies
@@ -141,7 +145,7 @@ async def health_check():
 # =============================================================================
 @app.get("/login", response_class=HTMLResponse, tags=["auth"])
 async def login_page(r: Request):
-    return templates.TemplateResponse("login.html", {"request": r})
+    return templates.TemplateResponse(request=r, name="login.html", context={})
 
 @app.post("/login", tags=["auth"])
 async def login_do(username: str = Form(...), password: str = Form(...)):
@@ -160,13 +164,16 @@ async def login_do(username: str = Form(...), password: str = Form(...)):
 async def index(r: Request):
     if r.cookies.get("admin_token") != SESSION_KEY:
         return RedirectResponse("/login", 302)
-    return templates.TemplateResponse("admin.html", {
-        "request": r,
-        "pool": db.get_all_pool_status(),
-        "models": db.get_models(),
-        "expired_models": db.get_expired_models(),
-        "keys": db.list_keys(),
-    })
+    return templates.TemplateResponse(
+        request=r,
+        name="admin.html",
+        context={
+            "pool": db.get_all_pool_status(),
+            "models": db.get_models(),
+            "expired_models": db.get_expired_models(),
+            "keys": db.list_keys(),
+        },
+    )
 
 # =============================================================================
 # Pool Management
