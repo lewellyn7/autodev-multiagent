@@ -1,8 +1,25 @@
-fastapi
-uvicorn
-jinja2
-g4f
-python-multipart
-httpx
-pydub
-curl_cffi>=0.7.0
+# Core
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.6.0
+
+# LLM Integration
+g4f>=0.3.5
+curl-cffi>=0.6.0
+
+# Database
+aiosqlite>=0.20.0
+
+# Templates
+jinja2>=3.1.0
+
+# HTTP Client
+httpx>=0.27.0
+
+# Security
+python-multipart>=0.0.9
+
+# Testing
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+httpx>=0.27.0
