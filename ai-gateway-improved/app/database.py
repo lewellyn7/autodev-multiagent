@@ -654,7 +654,7 @@ def get_proxy_accounts(source, status_filter='active'):
             else:
                 rows = conn.execute("SELECT * FROM proxy_accounts WHERE source=? ORDER BY account_index", (source,)).fetchall()
         
-        cols = ['id','source','account_index','cookies','tokens','status','success_count','fail_count','last_used','last_success','avg_latency','created_at']
+        cols = ['id','source','account_index','cookies','tokens','status','success_count','fail_count','last_used','last_success','avg_latency','concurrent_requests','max_concurrent','priority','last_error','created_at']
         result = []
         for r in rows:
             row_dict = dict(zip(cols, r))
@@ -812,5 +812,624 @@ def delete_proxy_account(account_id):
         else:
             conn.execute("DELETE FROM proxy_accounts WHERE id=?", (account_id,))
 
+
+
+# =============================================================================
+# Health Scoring System - Multi-dimensional account health evaluation
+# =============================================================================
+
+def calculate_account_health(account_id, max_latency_threshold=5000):
+    """
+    Calculate health score for a specific account.
+    score = (success_rate * 0.4) + (latency_score * 0.3) + (availability * 0.3)
+    
+    Args:
+        account_id: Account ID to calculate health for
+        max_latency_threshold: Maximum acceptable latency in ms (default 5000ms)
+    
+    Returns:
+        dict: Health score details
+    """
+    # Get account data
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = get_cursor(conn)
+            cur.execute("SELECT * FROM proxy_accounts WHERE id=%s", (account_id,))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            row = conn.execute("SELECT * FROM proxy_accounts WHERE id=?", (account_id,)).fetchone()
+    
+    if not row:
+        return None
+    
+    # Build account dict
+    cols = ['id','source','account_index','cookies','tokens','status','success_count','fail_count','last_used','last_success','avg_latency','concurrent_requests','max_concurrent','priority','last_error','created_at']
+    account = dict(zip(cols, row))
+    
+    # Calculate success_rate = success_count / (success_count + fail_count)
+    success_count = account['success_count']
+    fail_count = account['fail_count']
+    total = success_count + fail_count
+    
+    if total == 0:
+        success_rate = 1.0  # No failures yet, assume healthy
+    else:
+        success_rate = success_count / total
+    
+    # Calculate latency_score = 1 - (avg_latency / max_latency_threshold)
+    avg_latency = account['avg_latency'] or 0
+    latency_score = max(0, min(1, 1 - (avg_latency / max_latency_threshold)))
+    
+    # Calculate availability = 1 if status='active' else 0
+    availability = 1 if account['status'] == 'active' else 0
+    
+    # Calculate overall score
+    score = (success_rate * 0.4) + (latency_score * 0.3) + (availability * 0.3)
+    
+    return {
+        'account_id': account_id,
+        'score': round(score, 4),
+        'success_rate': round(success_rate, 4),
+        'latency_score': round(latency_score, 4),
+        'availability': availability,
+        'concurrent_requests': account.get('concurrent_requests', 0),
+        'max_concurrent': account.get('max_concurrent', 10),
+        'priority': account.get('priority', 1),
+        'last_error': account.get('last_error'),
+        'account_info': {
+            'id': account['id'],
+            'source': account['source'],
+            'account_index': account['account_index'],
+            'status': account['status'],
+            'success_count': success_count,
+            'fail_count': fail_count,
+            'avg_latency': round(avg_latency, 2),
+        }
+    }
+
+
+def get_best_account(source, strategy='health_score'):
+    """
+    Get the best available account for a source based on health score.
+    
+    Args:
+        source: Pool source identifier
+        strategy: Selection strategy ('health_score', 'priority', 'round_robin')
+    
+    Returns:
+        dict: Best account details or None if no accounts available
+    """
+    accounts = get_proxy_accounts(source, status_filter='active')
+    
+    if not accounts:
+        return None
+    
+    if strategy == 'health_score':
+        # Score each account and pick the best
+        scored_accounts = []
+        for acc in accounts:
+            health = calculate_account_health(acc['id'])
+            if health:
+                scored_accounts.append((health['score'], acc))
+        
+        if not scored_accounts:
+            return accounts[0] if accounts else None
+        
+        # Sort by score descending
+        scored_accounts.sort(key=lambda x: x[0], reverse=True)
+        best = scored_accounts[0][1]
+        _mark_used(best['id'])
+        return best
+    
+    elif strategy == 'priority':
+        # Sort by priority (descending) then by last_used (ascending)
+        accounts.sort(key=lambda x: (-x.get('priority', 1), x['last_used'] or ''))
+        best = accounts[0]
+        _mark_used(best['id'])
+        return best
+    
+    else:
+        # Default round_robin
+        return get_pool_by_strategy(source, 'round_robin')
+
+
+def get_account_health_batch(source, max_latency_threshold=5000):
+    """
+    Get health scores for all accounts in a source pool.
+    
+    Args:
+        source: Pool source identifier
+        max_latency_threshold: Maximum acceptable latency in ms
+    
+    Returns:
+        list: List of health score dicts for all accounts
+    """
+    accounts = get_proxy_accounts(source, status_filter=None)
+    health_scores = []
+    
+    for acc in accounts:
+        health = calculate_account_health(acc['id'], max_latency_threshold)
+        if health:
+            health_scores.append(health)
+    
+    return health_scores
+
+
+def increment_concurrent(account_id, delta=1):
+    """
+    Increment or decrement concurrent request count for an account.
+    
+    Args:
+        account_id: Account ID
+        delta: Change to apply (+1 or -1)
+    """
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE proxy_accounts 
+                SET concurrent_requests = GREATEST(0, concurrent_requests + %s)
+                WHERE id = %s
+            """, (delta, account_id))
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute("""
+                UPDATE proxy_accounts 
+                SET concurrent_requests = MAX(0, concurrent_requests + ?)
+                WHERE id = ?
+            """, (delta, account_id))
+
+
+def update_account_error(account_id, error_message):
+    """
+    Update the last error for an account.
+    
+    Args:
+        account_id: Account ID
+        error_message: Error message to store
+    """
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE proxy_accounts 
+                SET last_error = %s, fail_count = fail_count + 1
+                WHERE id = %s
+            """, (error_message, account_id))
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute("""
+                UPDATE proxy_accounts 
+                SET last_error = ?, fail_count = fail_count + 1
+                WHERE id = ?
+            """, (error_message, account_id))
+
+
+def update_account_concurrent_limit(account_id, max_concurrent):
+    """
+    Update max concurrent limit for an account.
+    
+    Args:
+        account_id: Account ID
+        max_concurrent: New max concurrent limit
+    """
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE proxy_accounts 
+                SET max_concurrent = %s
+                WHERE id = %s
+            """, (max_concurrent, account_id))
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute("""
+                UPDATE proxy_accounts 
+                SET max_concurrent = ?
+                WHERE id = ?
+            """, (max_concurrent, account_id))
+
+
+def update_account_priority(account_id, priority):
+    """
+    Update priority for an account.
+    
+    Args:
+        account_id: Account ID
+        priority: New priority value
+    """
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE proxy_accounts 
+                SET priority = %s
+                WHERE id = %s
+            """, (priority, account_id))
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute("""
+                UPDATE proxy_accounts 
+                SET priority = ?
+                WHERE id = ?
+            """, (priority, account_id))
+
 # Initialize on import
 init_proxy_accounts_table()
+
+# =============================================================================
+# Audit Log Operations
+# =============================================================================
+
+def init_audit_log_table():
+    """Initialize audit_log table if not exists."""
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    action VARCHAR(255),
+                    user_id VARCHAR(255),
+                    ip_address VARCHAR(45),
+                    method VARCHAR(10),
+                    path TEXT,
+                    request_body TEXT,
+                    response_status INTEGER,
+                    latency_ms INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    action VARCHAR(255),
+                    user_id VARCHAR(255),
+                    ip_address VARCHAR(45),
+                    method VARCHAR(10),
+                    path TEXT,
+                    request_body TEXT,
+                    response_status INTEGER,
+                    latency_ms INTEGER,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+def log_request(action, user_id, ip, method, path, body, status, latency):
+    """
+    Log a request to the audit log.
+    
+    Args:
+        action: The action being performed (e.g., "API_CALL", "ADMIN_ACTION")
+        user_id: User identifier or API key
+        ip: IP address of the requester
+        method: HTTP method (GET, POST, etc.)
+        path: Request path
+        body: Request body (sanitized)
+        status: Response status code
+        latency: Request latency in milliseconds
+    """
+    import json as json_lib
+    with get_conn() as conn:
+        # Serialize body to JSON string if it's a dict
+        if isinstance(body, (dict, list)):
+            body_str = json_lib.dumps(body)
+        else:
+            body_str = str(body) if body else None
+        
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO audit_log (action, user_id, ip_address, method, path, request_body, response_status, latency_ms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (action, user_id, ip, method, path, body_str, status, latency))
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute("""
+                INSERT INTO audit_log (action, user_id, ip_address, method, path, request_body, response_status, latency_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (action, user_id, ip, method, path, body_str, status, latency))
+
+def get_audit_logs(filters=None, limit=100, offset=0):
+    """
+    Get audit logs with optional filters.
+    
+    Args:
+        filters: Dict with optional filters:
+            - action: Filter by action
+            - user_id: Filter by user ID
+            - method: Filter by HTTP method
+            - path: Filter by path (substring match)
+            - status: Filter by response status
+            - start_date: Start timestamp
+            - end_date: End timestamp
+        limit: Maximum number of records to return
+        offset: Offset for pagination
+    
+    Returns:
+        List of audit log records
+    """
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = get_cursor(conn)
+            
+            # Build query with optional filters
+            query = """
+                SELECT id, timestamp, action, user_id, ip_address, method, path, 
+                       request_body, response_status, latency_ms, created_at
+                FROM audit_log WHERE 1=1
+            """
+            params = []
+            
+            if filters:
+                conditions = []
+                if filters.get('action'):
+                    conditions.append("action = %s")
+                    params.append(filters['action'])
+                if filters.get('user_id'):
+                    conditions.append("user_id = %s")
+                    params.append(filters['user_id'])
+                if filters.get('method'):
+                    conditions.append("method = %s")
+                    params.append(filters['method'])
+                if filters.get('path'):
+                    conditions.append("path LIKE %s")
+                    params.append(f"%{filters['path']}%")
+                if filters.get('status'):
+                    conditions.append("response_status = %s")
+                    params.append(filters['status'])
+                if filters.get('start_date'):
+                    conditions.append("timestamp >= %s")
+                    params.append(filters['start_date'])
+                if filters.get('end_date'):
+                    conditions.append("timestamp <= %s")
+                    params.append(filters['end_date'])
+                
+                if conditions:
+                    query += " AND " + " AND ".join(conditions)
+            
+            query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+            
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            cur.close()
+            
+            # Convert to list of dicts
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'timestamp': row[1].isoformat() if row[1] else None,
+                    'action': row[2],
+                    'user_id': row[3],
+                    'ip_address': row[4],
+                    'method': row[5],
+                    'path': row[6],
+                    'request_body': row[7],
+                    'response_status': row[8],
+                    'latency_ms': row[9],
+                    'created_at': row[10].isoformat() if row[10] else None
+                })
+            return result
+        else:
+            # SQLite version
+            query = """
+                SELECT id, timestamp, action, user_id, ip_address, method, path, 
+                       request_body, response_status, latency_ms, created_at
+                FROM audit_log WHERE 1=1
+            """
+            params = []
+            
+            if filters:
+                conditions = []
+                if filters.get('action'):
+                    conditions.append("action = ?")
+                    params.append(filters['action'])
+                if filters.get('user_id'):
+                    conditions.append("user_id = ?")
+                    params.append(filters['user_id'])
+                if filters.get('method'):
+                    conditions.append("method = ?")
+                    params.append(filters['method'])
+                if filters.get('path'):
+                    conditions.append("path LIKE ?")
+                    params.append(f"%{filters['path']}%")
+                if filters.get('status'):
+                    conditions.append("response_status = ?")
+                    params.append(filters['status'])
+                if filters.get('start_date'):
+                    conditions.append("timestamp >= ?")
+                    params.append(filters['start_date'])
+                if filters.get('end_date'):
+                    conditions.append("timestamp <= ?")
+                    params.append(filters['end_date'])
+                
+                if conditions:
+                    query += " AND " + " AND ".join(conditions)
+            
+            query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            rows = conn.execute(query, params).fetchall()
+            
+            # Convert to list of dicts
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'timestamp': row[1],
+                    'action': row[2],
+                    'user_id': row[3],
+                    'ip_address': row[4],
+                    'method': row[5],
+                    'path': row[6],
+                    'request_body': row[7],
+                    'response_status': row[8],
+                    'latency_ms': row[9],
+                    'created_at': row[10]
+                })
+            return result
+
+def cleanup_old_logs(days_to_keep=30):
+    """
+    Delete audit logs older than specified days.
+    
+    Args:
+        days_to_keep: Number of days to retain logs (default: 30)
+    
+    Returns:
+        Number of records deleted
+    """
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute("""
+                DELETE FROM audit_log 
+                WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '%s days'
+            """ % days_to_keep)
+            deleted = cur.rowcount
+            conn.commit()
+            cur.close()
+            return deleted
+        else:
+            cursor = conn.execute("""
+                DELETE FROM audit_log 
+                WHERE timestamp < datetime('now', ? || ' days')
+            """, (f'-{days_to_keep}',))
+            deleted = cursor.rowcount
+            return deleted
+
+def get_audit_stats(start_date=None, end_date=None):
+    """
+    Get audit log statistics.
+    
+    Args:
+        start_date: Start timestamp for filtering
+        end_date: End timestamp for filtering
+    
+    Returns:
+        Dict with statistics
+    """
+    with get_conn() as conn:
+        date_filter = ""
+        params = []
+        
+        if start_date:
+            date_filter += " AND timestamp >= %s" if DB_TYPE == "postgres" else " AND timestamp >= ?"
+            params.append(start_date)
+        if end_date:
+            date_filter += " AND timestamp <= %s" if DB_TYPE == "postgres" else " AND timestamp <= ?"
+            params.append(end_date)
+        
+        if DB_TYPE == "postgres":
+            cur = get_cursor(conn)
+            
+            # Total requests
+            cur.execute(f"SELECT COUNT(*) FROM audit_log WHERE 1=1{date_filter}", params)
+            total = cur.fetchone()[0]
+            
+            # Requests by action
+            cur.execute(f"""
+                SELECT action, COUNT(*) as count 
+                FROM audit_log 
+                WHERE 1=1{date_filter}
+                GROUP BY action 
+                ORDER BY count DESC
+            """, params)
+            by_action = [dict(r) for r in cur.fetchall()]
+            
+            # Requests by method
+            cur.execute(f"""
+                SELECT method, COUNT(*) as count 
+                FROM audit_log 
+                WHERE 1=1{date_filter}
+                GROUP BY method 
+                ORDER BY count DESC
+            """, params)
+            by_method = [dict(r) for r in cur.fetchall()]
+            
+            # Average latency
+            cur.execute(f"""
+                SELECT AVG(latency_ms), MIN(latency_ms), MAX(latency_ms)
+                FROM audit_log 
+                WHERE 1=1{date_filter} AND latency_ms IS NOT NULL
+            """, params)
+            latency = cur.fetchone()
+            
+            # Error rate (4xx and 5xx responses)
+            cur.execute(f"""
+                SELECT COUNT(*) 
+                FROM audit_log 
+                WHERE 1=1{date_filter} AND response_status >= 400
+            """, params)
+            errors = cur.fetchone()[0]
+            
+            cur.close()
+            
+            return {
+                'total_requests': total,
+                'by_action': by_action,
+                'by_method': by_method,
+                'avg_latency_ms': round(latency[0], 2) if latency[0] else 0,
+                'min_latency_ms': latency[1] if latency[1] else 0,
+                'max_latency_ms': latency[2] if latency[2] else 0,
+                'error_count': errors,
+                'error_rate': round(errors / total * 100, 2) if total > 0 else 0
+            }
+        else:
+            # SQLite version
+            # Total requests
+            conn.execute(f"SELECT COUNT(*) FROM audit_log WHERE 1=1{date_filter}".replace('%s', '?'), params)
+            total = conn.execute(f"SELECT COUNT(*) FROM audit_log WHERE 1=1{date_filter}".replace('%s', '?'), params).fetchone()[0]
+            
+            # By action
+            by_action_rows = conn.execute(f"""
+                SELECT action, COUNT(*) as count FROM audit_log 
+                WHERE 1=1{date_filter} GROUP BY action ORDER BY count DESC
+            """, params).fetchall()
+            by_action = [{'action': r[0], 'count': r[1]} for r in by_action_rows]
+            
+            # By method
+            by_method_rows = conn.execute(f"""
+                SELECT method, COUNT(*) as count FROM audit_log 
+                WHERE 1=1{date_filter} GROUP BY method ORDER BY count DESC
+            """, params).fetchall()
+            by_method = [{'method': r[0], 'count': r[1]} for r in by_method_rows]
+            
+            # Latency stats
+            latency = conn.execute(f"""
+                SELECT AVG(latency_ms), MIN(latency_ms), MAX(latency_ms)
+                FROM audit_log WHERE 1=1{date_filter} AND latency_ms IS NOT NULL
+            """, params).fetchone()
+            
+            # Error count
+            errors = conn.execute(f"""
+                SELECT COUNT(*) FROM audit_log 
+                WHERE 1=1{date_filter} AND response_status >= 400
+            """, params).fetchone()[0]
+            
+            return {
+                'total_requests': total,
+                'by_action': by_action,
+                'by_method': by_method,
+                'avg_latency_ms': round(latency[0], 2) if latency and latency[0] else 0,
+                'min_latency_ms': latency[1] if latency and latency[1] else 0,
+                'max_latency_ms': latency[2] if latency and latency[2] else 0,
+                'error_count': errors,
+                'error_rate': round(errors / total * 100, 2) if total > 0 else 0
+            }
+
+# Initialize audit log table on module import
+init_audit_log_table()

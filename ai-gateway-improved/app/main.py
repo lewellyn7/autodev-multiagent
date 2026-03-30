@@ -104,6 +104,110 @@ app.add_middleware(
 # Rate limiting: 60 req/min global, 30 req/min for admin endpoints
 app.add_middleware(RateLimitMiddleware)
 
+# Add audit middleware for request logging
+# =============================================================================
+# Audit Logging Middleware
+# =============================================================================
+import time as time_module
+
+class AuditMiddleware:
+    """Middleware to log all API requests for audit purposes."""
+    
+    SENSITIVE_FIELDS = [
+        'password', 'passwd', 'pwd', 'secret', 'token', 'api_key', 'apikey',
+        'access_token', 'refresh_token', 'auth', 'authorization', 'credential',
+        'private_key', 'secret_key', 'secretkey', 'key'
+    ]
+    
+    def __init__(self, app):
+        self.app = app
+    
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        
+        start_time = time_module.time()
+        method = scope['method']
+        path = scope['path']
+        
+        client = scope.get('client', ('unknown', 0))
+        ip_address = client[0] if client else 'unknown'
+        
+        headers = dict(scope.get('headers', []))
+        auth_header = headers.get(b'authorization', b'').decode()
+        user_id = 'anonymous'
+        if auth_header.startswith('Bearer '):
+            user_id = auth_header[7:]
+        elif not auth_header:
+            cookie_header = headers.get(b'cookie', b'').decode()
+            if 'admin_token' in cookie_header:
+                user_id = 'admin'
+        
+        if '/api/' in path or '/v1/' in path:
+            action = 'API_CALL'
+        elif path in ['/', '/login', '/admin']:
+            action = 'PAGE_VIEW'
+        else:
+            action = 'UNKNOWN'
+        
+        request_body = None
+        content_length = int(headers.get(b'content-length', 0))
+        if scope['method'] in ['POST', 'PUT', 'PATCH'] and content_length > 0:
+            request_body = f'[Body: {content_length} bytes]'
+        
+        response_status = None
+        
+        async def send_wrapper(message):
+            nonlocal start_time, response_status
+            
+            if message['type'] == 'http.response.start':
+                response_status = message['status']
+                latency_ms = int((time_module.time() - start_time) * 1000)
+                
+                try:
+                    db.log_request(
+                        action=action,
+                        user_id=user_id,
+                        ip=ip_address,
+                        method=method,
+                        path=path,
+                        body=request_body,
+                        status=response_status,
+                        latency=latency_ms
+                    )
+                except Exception as e:
+                    logger.error(f"Audit logging failed: {e}")
+                
+                if path not in ['/health', '/']:
+                    logger.info(f"AUDIT: {action} {method} {path} {response_status} {latency_ms}ms")
+            
+            await send(message)
+        
+        return await self.app(scope, receive, send_wrapper)
+
+
+def sanitize_request_body(body: dict) -> dict:
+    """Sanitize sensitive information from request body."""
+    if not body:
+        return body
+    
+    sanitized = {}
+    for key, value in body.items():
+        key_lower = key.lower()
+        is_sensitive = any(sensitive in key_lower for sensitive in AuditMiddleware.SENSITIVE_FIELDS)
+        
+        if is_sensitive:
+            if isinstance(value, str):
+                sanitized[key] = value[:2] + '***' if len(value) > 2 else '***'
+            else:
+                sanitized[key] = '[REDACTED]'
+        else:
+            sanitized[key] = value
+    
+    return sanitized
+
+app.add_middleware(AuditMiddleware)
+
 db.init_db()
 templates = Jinja2Templates(directory="app/templates")
 
@@ -534,6 +638,103 @@ async def delete_pool_account(source: str, account_id: int, _=Depends(api_auth))
     return {"status": "success"}
 
 
+
+# =============================================================================
+# Health Score API - Multi-dimensional health evaluation
+# =============================================================================
+
+@app.get("/api/pool/{source}/score", tags=["pool"])
+async def get_pool_score(source: str, max_latency: float = 5000, _=Depends(api_auth)):
+    """
+    Get health scores for all accounts in a pool.
+    Returns detailed health metrics for each account.
+    """
+    try:
+        health_scores = db.get_account_health_batch(source, max_latency)
+        return {"status": "success", "data": {"source": source, "health_scores": health_scores}}
+    except Exception as e:
+        logger.error(f"Error getting pool scores: {e}")
+        return {"status": "error", "msg": str(e)}
+
+
+@app.get("/api/pool/{source}/best", tags=["pool"])
+async def get_best_pool_account(source: str, strategy: str = "health_score", _=Depends(api_auth)):
+    """
+    Get the best available account for a source based on health score.
+    Strategies:
+    - health_score: Select by highest health score (default)
+    - priority: Select by priority weight
+    - round_robin: Traditional round-robin selection
+    """
+    try:
+        account = db.get_best_account(source, strategy)
+        if not account:
+            return JSONResponse({"status": "error", "msg": f"No active account for {source}"}, 404)
+        
+        # Calculate health score for the best account
+        health = db.calculate_account_health(account['id'])
+        
+        return {
+            "status": "success", 
+            "data": {
+                "account": {
+                    "id": account["id"],
+                    "source": account["source"],
+                    "account_index": account["account_index"],
+                    "status": account["status"],
+                },
+                "health_score": health["score"] if health else None,
+                "strategy_used": strategy
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting best account: {e}")
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/pool/{source}/account/{account_id}/concurrent", tags=["pool"])
+async def update_account_concurrent(
+    source: str, 
+    account_id: int, 
+    delta: int = Form(...),
+    _=Depends(api_auth)
+):
+    """
+    Update concurrent request count for an account.
+    Use delta: +1 to increment, -1 to decrement.
+    """
+    try:
+        db.increment_concurrent(account_id, delta)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error updating concurrent count: {e}")
+        return {"status": "error", "msg": str(e)}
+
+
+@app.put("/api/pool/{source}/account/{account_id}/config", tags=["pool"])
+async def update_account_config(
+    source: str,
+    account_id: int,
+    max_concurrent: int = Body(None),
+    priority: int = Body(None),
+    _=Depends(api_auth)
+):
+    """
+    Update account configuration.
+    - max_concurrent: Maximum concurrent requests allowed
+    - priority: Priority weight for selection
+    """
+    try:
+        if max_concurrent is not None:
+            db.update_account_concurrent_limit(account_id, max_concurrent)
+        if priority is not None:
+            db.update_account_priority(account_id, priority)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error updating account config: {e}")
+        return {"status": "error", "msg": str(e)}
+
+
 # =============================================================================
 # Model Management
 # =============================================================================
@@ -756,8 +957,261 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
         }
 
 # =============================================================================
+# Audit Log API Endpoints
+# =============================================================================
+
+@app.get("/api/audit/logs", tags=["audit"])
+async def get_audit_logs(
+    request: Request,
+    action: str = None,
+    user_id: str = None,
+    method: str = None,
+    path: str = None,
+    status: int = None,
+    start_date: str = None,
+    end_date: str = None,
+    limit: int = 100,
+    offset: int = 0,
+    _: dict = Depends(api_auth)
+):
+    """
+    Get audit logs with optional filters.
+    
+    Query Parameters:
+    - action: Filter by action type (e.g., "API_CALL", "ADMIN_ACTION")
+    - user_id: Filter by user ID
+    - method: Filter by HTTP method (GET, POST, etc.)
+    - path: Filter by path (substring match)
+    - status: Filter by response status code
+    - start_date: Start timestamp (ISO format)
+    - end_date: End timestamp (ISO format)
+    - limit: Maximum records to return (default: 100)
+    - offset: Offset for pagination (default: 0)
+    """
+    try:
+        # Build filters dict
+        filters = {}
+        if action:
+            filters['action'] = action
+        if user_id:
+            filters['user_id'] = user_id
+        if method:
+            filters['method'] = method
+        if path:
+            filters['path'] = path
+        if status:
+            filters['status'] = status
+        if start_date:
+            filters['start_date'] = start_date
+        if end_date:
+            filters['end_date'] = end_date
+        
+        # Get logs from database
+        logs = db.get_audit_logs(filters=filters if filters else None, limit=limit, offset=offset)
+        
+        return {
+            "status": "success",
+            "data": logs,
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+                "total": len(logs)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error fetching audit logs: {e}")
+        raise HTTPException(500, f"Failed to fetch audit logs: {str(e)}")
+
+
+@app.get("/api/audit/stats", tags=["audit"])
+async def get_audit_stats(
+    request: Request,
+    start_date: str = None,
+    end_date: str = None,
+    _: dict = Depends(api_auth)
+):
+    """
+    Get audit log statistics.
+    
+    Query Parameters:
+    - start_date: Start timestamp (ISO format)
+    - end_date: End timestamp (ISO format)
+    
+    Returns:
+    - total_requests: Total number of requests
+    - by_action: Breakdown by action type
+    - by_method: Breakdown by HTTP method
+    - avg_latency_ms: Average response latency
+    - min_latency_ms: Minimum response latency
+    - max_latency_ms: Maximum response latency
+    - error_count: Number of error responses (4xx/5xx)
+    - error_rate: Percentage of error responses
+    """
+    try:
+        stats = db.get_audit_stats(start_date=start_date, end_date=end_date)
+        return {
+            "status": "success",
+            "data": stats
+        }
+    except Exception as e:
+        logger.error(f"Error fetching audit stats: {e}")
+        raise HTTPException(500, f"Failed to fetch audit stats: {str(e)}")
+
+
+@app.post("/api/audit/cleanup", tags=["audit"])
+async def cleanup_audit_logs(
+    days_to_keep: int = Form(30),
+    _: dict = Depends(api_auth)
+):
+    """
+    Clean up old audit logs.
+    
+    Form Parameters:
+    - days_to_keep: Number of days to retain logs (default: 30)
+    """
+    try:
+        deleted = db.cleanup_old_logs(days_to_keep)
+        logger.info(f"Cleaned up {deleted} old audit logs")
+        return {
+            "status": "success",
+            "msg": f"Deleted {deleted} old audit log entries"
+        }
+    except Exception as e:
+        logger.error(f"Error cleaning up audit logs: {e}")
+        raise HTTPException(500, f"Failed to cleanup audit logs: {str(e)}")
+
+
+
+# =============================================================================
+# Protocol Conversion Layer - OpenAI / Claude / Gemini 互转
+# =============================================================================
+
+# Model fallback chains (按优先级尝试)
+MODEL_FALLBACK_CHAIN = {
+    "gpt-4o": ["gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"],
+    "gpt-4o-mini": ["gpt-3.5-turbo", "claude-3-sonnet-20240229"],
+    "claude-3-opus": ["claude-3-sonnet-20240229", "claude-3-haiku-20240307"],
+    "claude-3-sonnet": ["claude-3-haiku-20240307", "gpt-4o-mini"],
+    "gemini-1.5-pro": ["gemini-1.5-flash", "gemini-pro"],
+    "gemini-1.5-flash": ["gemini-pro"],
+}
+
+# Provider fallback chains
+PROVIDER_FALLBACK_CHAIN = {
+    "chatgpt": ["deepseek", "moonshot", "openai"],
+    "claude": ["chatgpt", "deepseek"],
+    "gemini": ["chatgpt", "deepseek"],
+    "deepseek": ["moonshot", "openai"],
+    "moonshot": ["openai", "deepseek"],
+    "openai": ["chatgpt", "deepseek"],
+    "qwen": ["deepseek", "chatgpt"],
+}
+
+def convert_claude_to_openai(messages: list) -> list:
+    """Convert Claude message format to OpenAI format."""
+    openai_messages = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        if role == "assistant":
+            role = "assistant"
+        elif role == "user":
+            role = "user"
+        elif role == "system":
+            role = "system"
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            openai_messages.append({"role": role, "content": content})
+        else:
+            # Handle Claude content blocks
+            text_content = ""
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_content += block.get("text", "")
+            else:
+                text_content = str(content)
+            openai_messages.append({"role": role, "content": text_content})
+    return openai_messages
+
+def convert_gemini_to_openai(messages: list) -> list:
+    """Convert Gemini message format to OpenAI format."""
+    openai_messages = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        # Gemini uses "model" for assistant, normalize to "assistant"
+        if role == "model":
+            role = "assistant"
+        content = msg.get("parts", [{}])
+        if isinstance(content, list):
+            text = "".join([p.get("text", "") for p in content if isinstance(p, dict)])
+        else:
+            text = str(content)
+        openai_messages.append({"role": role, "content": text})
+    return openai_messages
+
+def convert_openai_to_claude(messages: list) -> list:
+    """Convert OpenAI message format to Claude format."""
+    claude_messages = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            claude_messages.append({"role": role, "content": content})
+        else:
+            text_content = ""
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_content += block.get("text", "")
+                        elif block.get("type") == "image_url":
+                            text_content += "[image] "
+            claude_messages.append({"role": role, "content": text_content})
+    return claude_messages
+
+def get_fallback_models(model: str) -> list:
+    """Get fallback models for a given model."""
+    return MODEL_FALLBACK_CHAIN.get(model, [])
+
+def get_fallback_providers(source: str) -> list:
+    """Get fallback providers for a given source."""
+    return PROVIDER_FALLBACK_CHAIN.get(source, [])
+
+def build_openai_error_response(message: str, error_type: str = "invalid_request", code: str = None) -> dict:
+    """Build OpenAI compatible error response."""
+    return {
+        "error": {
+            "message": message,
+            "type": error_type,
+            "code": code,
+            "param": None,
+            "status": 400
+        }
+    }
+
+class StreamingKeepAlive:
+    """Send keep-alive comments during streaming to prevent connection timeout."""
+    def __init__(self, interval_ms: int = 15000):
+        self.interval = interval_ms / 1000.0
+        self.enabled = True
+    
+    def __iter__(self):
+        import time
+        last_yield = time.time()
+        while self.enabled:
+            current_time = time.time()
+            if current_time - last_yield >= self.interval:
+                yield f": keepalive_{int(current_time)}\n\n"
+                last_yield = current_time
+            time.sleep(0.1)
+    
+    def stop(self):
+        self.enabled = False
+
+# =============================================================================
 # GitHub OAuth Handler
 # =============================================================================
+
 import base64
 
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
