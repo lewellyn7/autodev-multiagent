@@ -28,7 +28,9 @@ POSTGRES_CONFIG = {
 
 def get_conn():
     """Get database connection based on DB_TYPE."""
-    if DB_TYPE == "postgres":
+    db_type = os.getenv("DB_TYPE", "sqlite").lower()
+    
+    if db_type == "postgres":
         try:
             import psycopg2
             from psycopg2.extras import RealDictCursor
@@ -37,7 +39,7 @@ def get_conn():
             return conn
         except ImportError:
             logger.warning("psycopg2 not installed, falling back to SQLite")
-            DB_TYPE = "sqlite"
+            # Continue to SQLite fallback below
     
     # SQLite default
     os.makedirs(os.path.dirname(DB_FILE) if os.path.dirname(DB_FILE) else ".", exist_ok=True)

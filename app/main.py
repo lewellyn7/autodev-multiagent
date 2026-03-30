@@ -172,6 +172,7 @@ async def index(r: Request):
             "models": db.get_models(),
             "expired_models": db.get_expired_models(),
             "keys": db.list_keys(),
+            "rateLimit": {"remaining": 60, "limit": 60},
         },
     )
 
