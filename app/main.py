@@ -54,7 +54,45 @@ class ChatReq(BaseModel):
 # =============================================================================
 # App
 # =============================================================================
-app = FastAPI(title="AI Gateway", version="1.0.0", debug=DEBUG)
+app = FastAPI(
+    title="AI Gateway",
+    version="1.0.0",
+    debug=DEBUG,
+    description="""
+## 🦞 AI Gateway - Multi-LLM Proxy API
+
+A unified API gateway that aggregates multiple LLM providers (ChatGPT, Claude, DeepSeek, Moonshot, Qwen, etc.) 
+behind a single OpenAI-compatible interface.
+
+### Features
+- **OpenAI Compatible** - Use existing OpenAI clients with minimal changes
+- **Multi-Provider** - Seamlessly route requests across ChatGPT, Claude, Gemini, DeepSeek, and more
+- **WAF Bypass** - Advanced fingerprint spoofing for strict cloud services
+- **Rate Limiting** - Per-key rate limits with sliding window
+- **Admin Dashboard** - Web UI for managing pools, models, and API keys
+- **Docker Ready** - Multi-stage build for minimal image size
+
+### Rate Limits
+- **Global**: 60 requests/minute per API key
+- **Admin**: 30 requests/minute per session
+
+### Authentication
+- **Client**: Bearer token in `Authorization` header
+- **Admin**: Session cookie after login at `/login`
+""",
+    openapi_tags=[
+        {"name": "health", "description": "Health check endpoints"},
+        {"name": "auth", "description": "Admin authentication"},
+        {"name": "admin", "description": "Admin dashboard"},
+        {"name": "pool", "description": "Proxy pool management"},
+        {"name": "models", "description": "Model registry management"},
+        {"name": "keys", "description": "API key management"},
+        {"name": "openai", "description": "OpenAI-compatible API endpoints"},
+    ],
+    docs_url="/docs",
+    redoc_url="/redoc",
+    docs_theme="universe",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
