@@ -1,19 +1,51 @@
+version: '3.8'
 
 services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-gateway-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=ai_gateway
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ai-gateway-net
+
+  # ---------------------------------------------------------------------------
+  # AI Gateway Application
+  # ---------------------------------------------------------------------------
   ai-gateway:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: ai-gateway
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
-      - "28000:8000"
+      - "${PORT:-28000}:8000"
     environment:
+      - DB_TYPE=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=ai_gateway
+      - DB_USER=postgres
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - ADMIN_USER=${ADMIN_USER:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me-in-production}
       - DEBUG=${DEBUG:-false}
-    volumes:
-      - ./data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -26,3 +58,6 @@ services:
 networks:
   ai-gateway-net:
     driver: bridge
+
+volumes:
+  postgres_data:
