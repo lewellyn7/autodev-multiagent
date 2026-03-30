@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Gateway Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        [v-cloak] { display: none; }
+        .modal-mask { position: fixed; z-index: 50; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; }
+        .modal-container { background-color: #fff; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); padding: 24px; width: 100%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
+        .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 md:p-8">
+<div id="app" class="max-w-6xl mx-auto space-y-8" v-cloak>
+    
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+            🤖 AI Gateway <span class="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">v5.0</span>
+        </h1>
+        <button onclick="document.cookie='admin_token=;path=/';location.reload()" class="text-red-500 hover:text-red-700 text-sm font-medium transition">退出登录</button>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+            <h2 class="font-bold text-gray-700">🍪 账号代理池 (Proxy Pool)</h2>
+            <span class="text-xs text-gray-400">Plugin Sync Active</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm text-left">
+                <thead class="bg-gray-50 text-gray-500 border-b">
+                    <tr><th class="px-6 py-3">来源</th><th class="px-6 py-3">状态</th><th class="px-6 py-3">数量</th><th class="px-6 py-3">操作</th></tr>
+                </thead>
+                <tbody>
+                    <tr v-for="p in pool" :key="p.source" class="border-b last:border-0 hover:bg-gray-50">
+                        <td class="px-6 py-4 font-bold uppercase text-gray-700">[[ p.source ]]</td>
+                        <td class="px-6 py-4">
+                            <span v-if="p.status === 'active'" class="text-green-600 bg-green-50 px-2 py-1 rounded text-xs font-bold">✅ 有效</span>
+                            <span v-else-if="p.status === 'expired'" class="text-red-600 bg-red-50 px-2 py-1 rounded text-xs font-bold">❌ 失效</span>
+                            <span v-else class="text-gray-500 bg-gray-100 px-2 py-1 rounded text-xs">❓ 未测</span>
+                        </td>
+                        <td class="px-6 py-4">[[ p.cookie_count ]]</td>
+                        <td class="px-6 py-4 flex gap-3">
+                            <button @click="testPool(p.source)" :disabled="testing===p.source" class="text-blue-600 hover:underline">[[ testing===p.source?'检测...':'检测' ]]</button>
+                            <button @click="openEditToken(p.source)" class="text-indigo-600 hover:underline">✏️ 填Key</button>
+                            <button @click="delPool(p.source)" class="text-red-500 hover:underline">删除</button>
+                        </td>
+                    </tr>
+                    <tr v-if="pool.length===0"><td colspan="4" class="p-8 text-center text-gray-400">暂无数据</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-100 flex flex-col md:flex-row justify-between md:items-center gap-4">
+            <h2 class="font-bold text-gray-700">📚 活跃模型库</h2>
+            <div class="flex gap-2">
+                <button @click="showManualModelModal=true" class="text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded text-xs transition border">手动添加</button>
+                <button @click="showFetchModal=true" class="bg-indigo-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-indigo-700 shadow-sm transition">⚡ 自动获取</button>
+            </div>
+        </div>
+        <div class="p-6">
+            <div class="mb-4 flex flex-wrap gap-3 items-center border-b border-dashed border-gray-200 pb-4">
+                <span class="text-xs font-bold text-gray-400 mr-1">筛选来源:</span>
+                <label class="flex items-center gap-1.5 cursor-pointer select-none bg-gray-50 px-2 py-1 rounded border border-gray-200 hover:bg-gray-100 transition">
+                    <input type="checkbox" v-model="selectAllSources" @change="toggleAllSources" class="rounded text-indigo-600 focus:ring-0">
+                    <span class="text-xs text-gray-600">全选</span>
+                </label>
+                <label v-for="s in sources" :key="s" class="flex items-center gap-1.5 cursor-pointer select-none">
+                    <input type="checkbox" :value="s" v-model="activeSourceFilters" class="rounded text-indigo-600 focus:ring-indigo-500">
+                    <span class="text-xs uppercase text-gray-600">[[ s ]]</span>
+                </label>
+            </div>
+            <div class="flex flex-wrap gap-2 max-h-[400px] overflow-y-auto content-start">
+                <transition-group name="fade">
+                    <div v-for="m in filteredModels" :key="m.id" class="group bg-white border border-gray-200 px-3 py-1.5 rounded text-sm flex items-center gap-2 hover:border-indigo-300 hover:shadow-sm transition">
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">[[ m.source.substring(0,3) ]]</span>
+                        <span class="font-medium text-gray-700">[[ m.name ]]</span>
+                        <button @click.stop="delModel(m.id)" class="text-gray-300 hover:text-red-500 font-bold ml-1 opacity-0 group-hover:opacity-100 transition">×</button>
+                    </div>
+                </transition-group>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 border-l-4 border-gray-400">
+        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center cursor-pointer hover:bg-gray-100 transition" @click="showExpired=!showExpired">
+            <div class="flex items-center gap-2">
+                <h2 class="font-bold text-gray-600">🗑️ 黑名单/过期模型</h2>
+                <span class="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">[[ expired.length ]]</span>
+            </div>
+            <span class="text-gray-400 text-sm">[[ showExpired ? '收起 ▲' : '展开 ▼' ]]</span>
+        </div>
+        <div v-show="showExpired" class="p-6 bg-gray-50/50">
+            <div class="flex flex-wrap gap-2 max-h-40 overflow-y-auto">
+                <transition-group name="fade">
+                    <span v-for="m in expired" :key="m.id" class="bg-gray-200 border border-gray-300 px-3 py-1 rounded text-sm flex items-center gap-2 grayscale opacity-70">
+                        <span class="text-gray-500 decoration-line-through">[[ m.name ]]</span>
+                        <span class="text-[10px] text-gray-400 uppercase">[[ m.source ]]</span>
+                        <button @click="delExpired(m.id)" class="text-gray-400 hover:text-blue-600 font-bold ml-1 transition">♻️</button>
+                    </span>
+                </transition-group>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 border-l-4 border-green-500">
+        <div class="px-6 py-4 border-b border-gray-100 bg-green-50/30 flex justify-between items-center">
+            <h2 class="font-bold text-gray-700">🔑 客户端密钥 (Client Keys)</h2>
+            <button @click="openKeyModal()" class="bg-green-600 text-white px-4 py-2 rounded text-sm shadow hover:bg-green-700 transition font-medium">+ 生成新 Key</button>
+        </div>
+        <div class="p-6 grid gap-4 md:grid-cols-2">
+            <div v-for="k in keys" :key="k.key" class="border border-gray-100 rounded-lg p-4 hover:shadow-md transition bg-white flex flex-col justify-between group relative overflow-hidden">
+                <div class="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition flex gap-1 bg-white/90 rounded-bl-lg border-b border-l border-gray-100">
+                    <button @click="openKeyModal(k)" class="text-xs text-blue-600 hover:bg-blue-50 px-2 py-1 rounded">编辑</button>
+                    <button @click="delKey(k.key)" class="text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded">删除</button>
+                </div>
+                <div>
+                    <div class="font-bold text-gray-800 mb-1">[[ k.name ]]</div>
+                    <code class="bg-gray-100 text-gray-500 px-2 py-1 rounded text-xs block break-all cursor-pointer hover:bg-gray-200 transition" @click="copy(k.key)">[[ k.key ]]</code>
+                </div>
+                <div class="mt-3 pt-3 border-t border-gray-50">
+                    <div v-if="!k.allowed_models" class="flex items-center gap-1 text-xs text-green-600"><span class="w-2 h-2 rounded-full bg-green-500"></span> 允许所有模型</div>
+                    <div v-else><div class="flex flex-wrap gap-1"><span v-for="m in k.allowed_models.split(',').slice(0,4)" class="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">[[ m ]]</span><span v-if="k.allowed_models.split(',').length > 4" class="text-[10px] text-gray-400 px-1">+[[ k.allowed_models.split(',').length - 4 ]]</span></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showTokenModal" class="modal-mask">
+        <div class="modal-container">
+            <h3 class="text-lg font-bold mb-4">✏️ 编辑凭证: [[ editTokenSource.toUpperCase() ]]</h3>
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-gray-500 mb-1">API Key / Access Token</label>
+                <textarea v-model="editTokenValue" class="w-full border p-2 rounded text-sm h-32 font-mono text-xs focus:border-blue-500 outline-none"></textarea>
+            </div>
+            <div class="flex justify-end gap-2">
+                <button @click="showTokenModal=false" class="px-4 py-2 text-gray-600 text-sm hover:bg-gray-100 rounded">取消</button>
+                <button @click="submitToken" class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700 shadow-sm">保存</button>
+            </div>
+        </div>
+    </div>
+    
+    <div v-if="showKeyModal" class="modal-mask">
+        <div class="modal-container">
+            <h3 class="text-lg font-bold mb-4">[[ isEdit ? '修改密钥' : '创建新密钥' ]]</h3>
+            <div class="mb-4"><label class="block text-xs font-bold text-gray-500 mb-1">备注名称</label><input v-model="keyForm.name" class="w-full border p-2 rounded text-sm outline-none focus:border-blue-500"></div>
+            <div class="mb-2 flex justify-between items-center"><label class="block text-xs font-bold text-gray-500">模型权限</label><label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" v-model="keyForm.allowAll" class="rounded text-green-600 focus:ring-0"><span class="text-xs font-bold text-gray-600">允许所有模型</span></label></div>
+            <div v-if="!keyForm.allowAll" class="border rounded-lg p-3 bg-gray-50 max-h-[300px] overflow-y-auto">
+                <div class="checkbox-grid">
+                    <label v-for="m in models" :key="m.id" class="flex items-center gap-2 cursor-pointer p-1 hover:bg-gray-100 rounded"><input type="checkbox" :value="m.name" v-model="keyForm.selectedModels" class="rounded text-blue-600 focus:ring-0"><span class="text-xs truncate">[[ m.name ]]</span></label>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-6">
+                <button @click="showKeyModal=false" class="px-4 py-2 text-gray-600 text-sm hover:bg-gray-100 rounded">取消</button>
+                <button @click="submitKey" class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showFetchModal" class="modal-mask">
+        <div class="modal-container" style="max-width: 400px;">
+            <h3 class="text-lg font-bold mb-4">自动获取模型</h3>
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-gray-500 mb-1">来源</label>
+                <select v-model="fetchSource" class="w-full border p-2 rounded bg-white text-sm"><option v-for="s in sources" :value="s">[[s.toUpperCase()]]</option></select>
+            </div>
+            <div class="mb-6"><label class="block text-xs font-bold text-gray-500 mb-1">API Key (可选)</label><input v-model="fetchToken" class="w-full border p-2 rounded text-sm" placeholder="自动读取"></div>
+            <div class="flex justify-end gap-2"><button @click="showFetchModal=false" class="px-4 py-2 text-gray-600 text-sm">取消</button><button @click="doFetch" :disabled="fetching" class="px-4 py-2 bg-indigo-600 text-white rounded text-sm hover:bg-indigo-700">[[ fetching ? '...' : '获取' ]]</button></div>
+        </div>
+    </div>
+
+    <div v-if="showManualModelModal" class="modal-mask">
+        <div class="modal-container" style="max-width: 400px;">
+            <h3 class="text-lg font-bold mb-4">手动添加模型</h3>
+            <input v-model="newMName" placeholder="模型 ID" class="w-full border p-2 rounded mb-3 text-sm">
+            <select v-model="newMSource" class="w-full border p-2 rounded mb-6 bg-white text-sm"><option v-for="s in sources" :value="s">[[s]]</option></select>
+            <div class="flex justify-end gap-2"><button @click="showManualModelModal=false" class="px-4 py-2 text-gray-600 text-sm">取消</button><button @click="addModel" class="px-4 py-2 bg-gray-800 text-white rounded text-sm">添加</button></div>
+        </div>
+    </div>
+</div>
+<script>
+const app = Vue.createApp({
+    data() {
+        return {
+            pool: {{ pool|tojson }}, models: {{ models|tojson }}, expired: {{ expired_models|tojson }}, keys: {{ keys|tojson }},
+            sources: ['chatgpt','deepseek','moonshot','openai','claude','gemini','qwen'], // [新增] qwen
+            activeSourceFilters: [], selectAllSources: true,
+            showFetchModal: false, fetchSource: 'chatgpt', fetchToken: '', fetching: false,
+            showManualModelModal: false, newMName:'', newMSource:'',
+            showKeyModal: false, isEdit: false, keyForm: { key: '', name: '', allowAll: true, selectedModels: [] },
+            showExpired: false, testing: '', showTokenModal: false, editTokenSource: '', editTokenValue: ''
+        }
+    },
+    computed: {
+        filteredModels() { if (this.activeSourceFilters.length === 0) return []; return this.models.filter(m => this.activeSourceFilters.includes(m.source)); }
+    },
+    watch: {
+        activeSourceFilters: { handler(val) { localStorage.setItem('model_filters', JSON.stringify(val)); this.selectAllSources = (val.length === this.sources.length); }, deep: true }
+    },
+    mounted() {
+        const saved = localStorage.getItem('model_filters');
+        if (saved) { this.activeSourceFilters = JSON.parse(saved); this.selectAllSources = (this.activeSourceFilters.length === this.sources.length); }
+        else { this.activeSourceFilters = [...this.sources]; }
+    },
+    methods: {
+        toggleAllSources() { this.activeSourceFilters = this.selectAllSources ? [...this.sources] : []; },
+        async delModel(id) { await fetch('/api/models/'+id,{method:'DELETE'}); const idx = this.models.findIndex(m => m.id === id); if (idx !== -1) { const item = this.models[idx]; this.models.splice(idx, 1); this.expired.push(item); } },
+        async delExpired(id) { await fetch('/api/models/expired/'+id,{method:'DELETE'}); const idx = this.expired.findIndex(m => m.id === id); if (idx !== -1) { this.expired.splice(idx, 1); } },
+        async addModel() { const fd=new FormData(); fd.append('name',this.newMName); fd.append('source',this.newMSource); await fetch('/api/models',{method:'POST',body:fd}); location.reload(); },
+        async delPool(s) { if(confirm('删?')) { await fetch('/api/pool/'+s, {method:'DELETE'}); location.reload(); } },
+        async testPool(s) {
+            this.testing = s;
+            try { const fd = new FormData(); fd.append('source', s); const res = await fetch('/api/pool/test', {method:'POST', body:fd}); const d = await res.json(); const idx = this.pool.findIndex(p => p.source === s); if (idx !== -1) this.pool[idx].status = d.data.valid ? 'active' : 'expired'; alert(d.data.msg); } catch(e) { alert('Err'); } finally { this.testing = ''; }
+        },
+        openEditToken(source) { this.editTokenSource = source; this.editTokenValue = ''; this.showTokenModal = true; },
+        async submitToken() { if(!this.editTokenValue) return alert("不能为空"); const fd = new FormData(); fd.append('source', this.editTokenSource); fd.append('token', this.editTokenValue); await fetch('/api/pool/update_token', {method:'POST', body:fd}); alert('更新成功，请点击检测验证'); this.showTokenModal = false; },
+        async doFetch() { this.fetching = true; const fd = new FormData(); fd.append('source', this.fetchSource); if(this.fetchToken) fd.append('api_key', this.fetchToken); try { const res = await fetch('/api/models/fetch', { method:'POST', body:fd }); const d = await res.json(); alert(d.msg); if(d.status === 'success') location.reload(); } catch(e) { alert('网络错误'); } finally { this.fetching = false; } },
+        openKeyModal(k = null) { if (k) { this.isEdit = true; const isAllowAll = !k.allowed_models || k.allowed_models === ''; this.keyForm = { key: k.key, name: k.name, allowAll: isAllowAll, selectedModels: isAllowAll ? [] : k.allowed_models.split(',').map(s=>s.trim()) }; } else { this.isEdit = false; this.keyForm = { key: '', name: '', allowAll: true, selectedModels: [] }; } this.showKeyModal = true; },
+        async submitKey() { if (!this.keyForm.name) return alert("备注必填"); let modelStr = ""; if (!this.keyForm.allowAll) { if (this.keyForm.selectedModels.length === 0) return alert("请选择模型"); modelStr = this.keyForm.selectedModels.join(','); } const payload = JSON.stringify({ name: this.keyForm.name, models: modelStr }); const headers = { 'Content-Type': 'application/json' }; if (this.isEdit) await fetch('/api/keys/' + this.keyForm.key, { method: 'PUT', headers, body: payload }); else { const fd = new FormData(); fd.append('name', this.keyForm.name); fd.append('models', modelStr); await fetch('/api/keys', { method: 'POST', body: fd }); } location.reload(); },
+        async delKey(k) { if(confirm('删?')) { await fetch('/api/keys/'+k, {method:'DELETE'}); location.reload(); } },
+        copy(t) { navigator.clipboard.writeText(t); alert('已复制'); }
+    }
+});
+app.config.compilerOptions.delimiters = ['[[', ']]'];
+app.mount('#app');
+</script></body></html>

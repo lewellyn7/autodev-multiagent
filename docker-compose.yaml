@@ -1,0 +1,26 @@
+services:
+  gateway:
+    build: .
+    container_name: ai_gateway_v4
+    
+    # [核心修复] 回归 Bridge 模式
+    # Host 模式在 TUN 环境下容易导致端口绑定失败或路由死锁
+    # 这里我们用标准映射：外部 28888 -> 内部 8000
+    ports:
+      - "28888:8000"
+    
+    volumes:
+      - ./data:/app/data
+      - ./app:/app/app
+      
+    environment:
+      - ADMIN_USER=admin
+      - ADMIN_PASSWORD=password123
+      - TZ=Asia/Shanghai
+      
+      # 既然你是 TUN 全局代理，这里暂不配 http_proxy
+      # 如果后续出网有问题，我们再单独加
+      
+    # 容器内部监听 8000 (标准做法)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: always
