@@ -9,6 +9,7 @@ import app.database as db
 import g4f
 
 from curl_cffi.requests import AsyncSession
+from app.middleware import RateLimitMiddleware
 
 # =============================================================================
 # App Configuration (Externalized)
@@ -61,6 +62,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Rate limiting: 60 req/min global, 30 req/min for admin endpoints
+app.add_middleware(RateLimitMiddleware)
 
 db.init_db()
 templates = Jinja2Templates(directory="app/templates")

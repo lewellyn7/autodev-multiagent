@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>AI Gateway Admin</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
@@ -11,18 +12,68 @@
         .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
         .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
         .fade-enter-from, .fade-leave-to { opacity: 0; }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen p-4 md:p-8">
 <div id="app" class="max-w-6xl mx-auto space-y-8" v-cloak>
-    
-    <div class="flex justify-between items-center">
-        <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
-            🤖 AI Gateway <span class="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded">v5.0</span>
-        </h1>
-        <button onclick="document.cookie='admin_token=;path=/';location.reload()" class="text-red-500 hover:text-red-700 text-sm font-medium transition">退出登录</button>
+
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div class="flex items-center gap-3">
+            <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                🤖 AI Gateway
+                <span class="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded font-mono">v1.0.0</span>
+            </h1>
+        </div>
+        <div class="flex items-center gap-4">
+            <!-- Health Check -->
+            <div class="flex items-center gap-2 text-sm">
+                <span class="relative flex h-2.5 w-2.5">
+                    <span v-if="healthStatus === 'healthy'" class="pulse-dot absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span v-if="healthStatus === 'healthy'" class="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
+                    <span v-else class="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
+                </span>
+                <span class="text-gray-500 text-xs">Health</span>
+            </div>
+            <!-- Rate Limit Status -->
+            <div class="flex items-center gap-2 text-sm">
+                <span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-mono">
+                    {{ rateLimit.remaining }}/{{ rateLimit.limit }}
+                </span>
+                <span class="text-gray-500 text-xs">RPM</span>
+            </div>
+            <button onclick="document.cookie='admin_token=;path=/';location.reload()" class="text-red-500 hover:text-red-700 text-sm font-medium transition">退出登录</button>
+        </div>
     </div>
 
+    <!-- System Status Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-gray-500 mb-1">活跃模型</p>
+                <p class="text-2xl font-bold text-gray-800">{{ models.length }}</p>
+            </div>
+            <div class="text-3xl">📚</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-gray-500 mb-1">有效代理</p>
+                <p class="text-2xl font-bold text-green-600">{{ activePoolCount }}</p>
+            </div>
+            <div class="text-3xl">✅</div>
+        </div>
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex items-center justify-between">
+            <div>
+                <p class="text-xs text-gray-500 mb-1">客户端密钥</p>
+                <p class="text-2xl font-bold text-gray-800">{{ keys.length }}</p>
+            </div>
+            <div class="text-3xl">🔑</div>
+        </div>
+    </div>
+
+    <!-- Proxy Pool -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
             <h2 class="font-bold text-gray-700">🍪 账号代理池 (Proxy Pool)</h2>
@@ -54,6 +105,7 @@
         </div>
     </div>
 
+    <!-- Model Library -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200">
         <div class="px-6 py-4 border-b border-gray-100 flex flex-col md:flex-row justify-between md:items-center gap-4">
             <h2 class="font-bold text-gray-700">📚 活跃模型库</h2>
@@ -86,6 +138,7 @@
         </div>
     </div>
 
+    <!-- Expired Models -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 border-l-4 border-gray-400">
         <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center cursor-pointer hover:bg-gray-100 transition" @click="showExpired=!showExpired">
             <div class="flex items-center gap-2">
@@ -107,6 +160,7 @@
         </div>
     </div>
 
+    <!-- Client Keys -->
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 border-l-4 border-green-500">
         <div class="px-6 py-4 border-b border-gray-100 bg-green-50/30 flex justify-between items-center">
             <h2 class="font-bold text-gray-700">🔑 客户端密钥 (Client Keys)</h2>
@@ -124,12 +178,13 @@
                 </div>
                 <div class="mt-3 pt-3 border-t border-gray-50">
                     <div v-if="!k.allowed_models" class="flex items-center gap-1 text-xs text-green-600"><span class="w-2 h-2 rounded-full bg-green-500"></span> 允许所有模型</div>
-                    <div v-else><div class="flex flex-wrap gap-1"><span v-for="m in k.allowed_models.split(',').slice(0,4)" class="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">[[ m ]]</span><span v-if="k.allowed_models.split(',').length > 4" class="text-[10px] text-gray-400 px-1">+[[ k.allowed_models.split(',').length - 4 ]]</span></div></div>
+                    <div v-else><div class="flex flex-wrap gap-1"><span v-for="m in k.allowed_models.split(',').slice(0,4)" :key="m" class="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded border border-gray-200">[[ m ]]</span><span v-if="k.allowed_models.split(',').length > 4" class="text-[10px] text-gray-400 px-1">+[[ k.allowed_models.split(',').length - 4 ]]</span></div></div>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Modals (unchanged from original) -->
     <div v-if="showTokenModal" class="modal-mask">
         <div class="modal-container">
             <h3 class="text-lg font-bold mb-4">✏️ 编辑凭证: [[ editTokenSource.toUpperCase() ]]</h3>
@@ -143,7 +198,7 @@
             </div>
         </div>
     </div>
-    
+
     <div v-if="showKeyModal" class="modal-mask">
         <div class="modal-container">
             <h3 class="text-lg font-bold mb-4">[[ isEdit ? '修改密钥' : '创建新密钥' ]]</h3>
@@ -182,49 +237,212 @@
         </div>
     </div>
 </div>
+
 <script>
 const app = Vue.createApp({
     data() {
         return {
-            pool: {{ pool|tojson }}, models: {{ models|tojson }}, expired: {{ expired_models|tojson }}, keys: {{ keys|tojson }},
-            sources: ['chatgpt','deepseek','moonshot','openai','claude','gemini','qwen'], // [新增] qwen
-            activeSourceFilters: [], selectAllSources: true,
-            showFetchModal: false, fetchSource: 'chatgpt', fetchToken: '', fetching: false,
-            showManualModelModal: false, newMName:'', newMSource:'',
-            showKeyModal: false, isEdit: false, keyForm: { key: '', name: '', allowAll: true, selectedModels: [] },
-            showExpired: false, testing: '', showTokenModal: false, editTokenSource: '', editTokenValue: ''
+            pool: {{ pool|tojson }},
+            models: {{ models|tojson }},
+            expired: {{ expired_models|tojson }},
+            keys: {{ keys|tojson }},
+            sources: ['chatgpt','deepseek','moonshot','openai','claude','gemini','qwen'],
+            activeSourceFilters: [],
+            selectAllSources: true,
+            showFetchModal: false,
+            fetchSource: 'chatgpt',
+            fetchToken: '',
+            fetching: false,
+            showManualModelModal: false,
+            newMName: '',
+            newMSource: '',
+            showKeyModal: false,
+            isEdit: false,
+            keyForm: { key: '', name: '', allowAll: true, selectedModels: [] },
+            showExpired: false,
+            testing: '',
+            showTokenModal: false,
+            editTokenSource: '',
+            editTokenValue: '',
+            // New fields
+            healthStatus: 'checking',
+            rateLimit: { remaining: 60, limit: 60 }
         }
     },
     computed: {
-        filteredModels() { if (this.activeSourceFilters.length === 0) return []; return this.models.filter(m => this.activeSourceFilters.includes(m.source)); }
+        filteredModels() {
+            if (this.activeSourceFilters.length === 0) return [];
+            return this.models.filter(m => this.activeSourceFilters.includes(m.source));
+        },
+        activePoolCount() {
+            return this.pool.filter(p => p.status === 'active').length;
+        }
     },
     watch: {
-        activeSourceFilters: { handler(val) { localStorage.setItem('model_filters', JSON.stringify(val)); this.selectAllSources = (val.length === this.sources.length); }, deep: true }
+        activeSourceFilters: {
+            handler(val) {
+                localStorage.setItem('model_filters', JSON.stringify(val));
+                this.selectAllSources = (val.length === this.sources.length);
+            },
+            deep: true
+        }
     },
-    mounted() {
+    async mounted() {
+        // Restore filters
         const saved = localStorage.getItem('model_filters');
-        if (saved) { this.activeSourceFilters = JSON.parse(saved); this.selectAllSources = (this.activeSourceFilters.length === this.sources.length); }
-        else { this.activeSourceFilters = [...this.sources]; }
+        if (saved) {
+            this.activeSourceFilters = JSON.parse(saved);
+            this.selectAllSources = (this.activeSourceFilters.length === this.sources.length);
+        } else {
+            this.activeSourceFilters = [...this.sources];
+        }
+
+        // Health check
+        try {
+            const res = await fetch('/health');
+            if (res.ok) {
+                this.healthStatus = 'healthy';
+            } else {
+                this.healthStatus = 'unhealthy';
+            }
+        } catch(e) {
+            this.healthStatus = 'unhealthy';
+        }
     },
     methods: {
-        toggleAllSources() { this.activeSourceFilters = this.selectAllSources ? [...this.sources] : []; },
-        async delModel(id) { await fetch('/api/models/'+id,{method:'DELETE'}); const idx = this.models.findIndex(m => m.id === id); if (idx !== -1) { const item = this.models[idx]; this.models.splice(idx, 1); this.expired.push(item); } },
-        async delExpired(id) { await fetch('/api/models/expired/'+id,{method:'DELETE'}); const idx = this.expired.findIndex(m => m.id === id); if (idx !== -1) { this.expired.splice(idx, 1); } },
-        async addModel() { const fd=new FormData(); fd.append('name',this.newMName); fd.append('source',this.newMSource); await fetch('/api/models',{method:'POST',body:fd}); location.reload(); },
-        async delPool(s) { if(confirm('删?')) { await fetch('/api/pool/'+s, {method:'DELETE'}); location.reload(); } },
+        toggleAllSources() {
+            this.activeSourceFilters = this.selectAllSources ? [...this.sources] : [];
+        },
+        async delModel(id) {
+            await fetch('/api/models/'+id, {method:'DELETE'});
+            const idx = this.models.findIndex(m => m.id === id);
+            if (idx !== -1) {
+                const item = this.models[idx];
+                this.models.splice(idx, 1);
+                this.expired.push(item);
+            }
+        },
+        async delExpired(id) {
+            await fetch('/api/models/expired/'+id, {method:'DELETE'});
+            const idx = this.expired.findIndex(m => m.id === id);
+            if (idx !== -1) this.expired.splice(idx, 1);
+        },
+        async addModel() {
+            const fd = new FormData();
+            fd.append('name', this.newMName);
+            fd.append('source', this.newMSource);
+            await fetch('/api/models', {method:'POST', body:fd});
+            location.reload();
+        },
+        async delPool(s) {
+            if(confirm('确认删除 ' + s + ' ?')) {
+                await fetch('/api/pool/'+s, {method:'DELETE'});
+                location.reload();
+            }
+        },
         async testPool(s) {
             this.testing = s;
-            try { const fd = new FormData(); fd.append('source', s); const res = await fetch('/api/pool/test', {method:'POST', body:fd}); const d = await res.json(); const idx = this.pool.findIndex(p => p.source === s); if (idx !== -1) this.pool[idx].status = d.data.valid ? 'active' : 'expired'; alert(d.data.msg); } catch(e) { alert('Err'); } finally { this.testing = ''; }
+            try {
+                const fd = new FormData();
+                fd.append('source', s);
+                const res = await fetch('/api/pool/test', {method:'POST', body:fd});
+                const d = await res.json();
+                const idx = this.pool.findIndex(p => p.source === s);
+                if (idx !== -1) this.pool[idx].status = d.data.valid ? 'active' : 'expired';
+                alert(d.data.msg);
+            } catch(e) {
+                alert('检测失败: ' + e.message);
+            } finally {
+                this.testing = '';
+            }
         },
-        openEditToken(source) { this.editTokenSource = source; this.editTokenValue = ''; this.showTokenModal = true; },
-        async submitToken() { if(!this.editTokenValue) return alert("不能为空"); const fd = new FormData(); fd.append('source', this.editTokenSource); fd.append('token', this.editTokenValue); await fetch('/api/pool/update_token', {method:'POST', body:fd}); alert('更新成功，请点击检测验证'); this.showTokenModal = false; },
-        async doFetch() { this.fetching = true; const fd = new FormData(); fd.append('source', this.fetchSource); if(this.fetchToken) fd.append('api_key', this.fetchToken); try { const res = await fetch('/api/models/fetch', { method:'POST', body:fd }); const d = await res.json(); alert(d.msg); if(d.status === 'success') location.reload(); } catch(e) { alert('网络错误'); } finally { this.fetching = false; } },
-        openKeyModal(k = null) { if (k) { this.isEdit = true; const isAllowAll = !k.allowed_models || k.allowed_models === ''; this.keyForm = { key: k.key, name: k.name, allowAll: isAllowAll, selectedModels: isAllowAll ? [] : k.allowed_models.split(',').map(s=>s.trim()) }; } else { this.isEdit = false; this.keyForm = { key: '', name: '', allowAll: true, selectedModels: [] }; } this.showKeyModal = true; },
-        async submitKey() { if (!this.keyForm.name) return alert("备注必填"); let modelStr = ""; if (!this.keyForm.allowAll) { if (this.keyForm.selectedModels.length === 0) return alert("请选择模型"); modelStr = this.keyForm.selectedModels.join(','); } const payload = JSON.stringify({ name: this.keyForm.name, models: modelStr }); const headers = { 'Content-Type': 'application/json' }; if (this.isEdit) await fetch('/api/keys/' + this.keyForm.key, { method: 'PUT', headers, body: payload }); else { const fd = new FormData(); fd.append('name', this.keyForm.name); fd.append('models', modelStr); await fetch('/api/keys', { method: 'POST', body: fd }); } location.reload(); },
-        async delKey(k) { if(confirm('删?')) { await fetch('/api/keys/'+k, {method:'DELETE'}); location.reload(); } },
-        copy(t) { navigator.clipboard.writeText(t); alert('已复制'); }
+        openEditToken(source) {
+            this.editTokenSource = source;
+            this.editTokenValue = '';
+            this.showTokenModal = true;
+        },
+        async submitToken() {
+            if(!this.editTokenValue) return alert("Token 不能为空");
+            const fd = new FormData();
+            fd.append('source', this.editTokenSource);
+            fd.append('token', this.editTokenValue);
+            await fetch('/api/pool/update_token', {method:'POST', body:fd});
+            alert('更新成功，请点击检测验证');
+            this.showTokenModal = false;
+        },
+        async doFetch() {
+            this.fetching = true;
+            const fd = new FormData();
+            fd.append('source', this.fetchSource);
+            if(this.fetchToken) fd.append('api_key', this.fetchToken);
+            try {
+                const res = await fetch('/api/models/fetch', {method:'POST', body:fd});
+                const d = await res.json();
+                alert(d.msg);
+                if(d.status === 'success') location.reload();
+            } catch(e) {
+                alert('网络错误: ' + e.message);
+            } finally {
+                this.fetching = false;
+            }
+        },
+        openKeyModal(k = null) {
+            if (k) {
+                this.isEdit = true;
+                const isAllowAll = !k.allowed_models || k.allowed_models === '';
+                this.keyForm = {
+                    key: k.key,
+                    name: k.name,
+                    allowAll: isAllowAll,
+                    selectedModels: isAllowAll ? [] : k.allowed_models.split(',').map(s=>s.trim())
+                };
+            } else {
+                this.isEdit = false;
+                this.keyForm = { key: '', name: '', allowAll: true, selectedModels: [] };
+            }
+            this.showKeyModal = true;
+        },
+        async submitKey() {
+            if (!this.keyForm.name) return alert("备注必填");
+            let modelStr = "";
+            if (!this.keyForm.allowAll) {
+                if (this.keyForm.selectedModels.length === 0) return alert("请选择模型");
+                modelStr = this.keyForm.selectedModels.join(',');
+            }
+            const headers = { 'Content-Type': 'application/json' };
+            if (this.isEdit) {
+                const payload = JSON.stringify({ name: this.keyForm.name, models: modelStr });
+                await fetch('/api/keys/' + this.keyForm.key, { method: 'PUT', headers, body: payload });
+            } else {
+                const fd = new FormData();
+                fd.append('name', this.keyForm.name);
+                fd.append('models', modelStr);
+                await fetch('/api/keys', { method: 'POST', body: fd });
+            }
+            location.reload();
+        },
+        async delKey(k) {
+            if(confirm('确认删除此密钥?')) {
+                await fetch('/api/keys/'+k, {method:'DELETE'});
+                location.reload();
+            }
+        },
+        copy(t) {
+            navigator.clipboard.writeText(t).then(() => {
+                this.showToast('已复制到剪贴板');
+            });
+        },
+        showToast(msg) {
+            const toast = document.createElement('div');
+            toast.className = 'fixed bottom-4 right-4 bg-gray-800 text-white px-4 py-2 rounded shadow-lg text-sm z-50';
+            toast.textContent = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
     }
 });
 app.config.compilerOptions.delimiters = ['[[', ']]'];
 app.mount('#app');
-</script></body></html>
+</script>
+</body>
+</html>
