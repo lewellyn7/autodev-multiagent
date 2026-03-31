@@ -1237,3 +1237,44 @@ def get_audit_logs(filters=None, limit=100, offset=0):
 
 # Initialize on import
 init_audit_log_table()
+
+
+def get_audit_stats(start_date=None, end_date=None):
+    """Get audit log statistics."""
+    with get_conn() as conn:
+        query = "SELECT COUNT(*) as total FROM audit_log WHERE 1=1"
+        params = []
+        
+        if start_date:
+            query += " AND created_at >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND created_at <= ?"
+            params.append(end_date)
+        
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute(query.replace("?", "%s"), params)
+            total = cur.fetchone()[0]
+            cur.close()
+        else:
+            total = conn.execute(query, params).fetchone()[0]
+        
+        return {"total_requests": total}
+
+
+def cleanup_old_logs(days_to_keep=30):
+    """Delete audit logs older than specified days."""
+    with get_conn() as conn:
+        if DB_TYPE == "postgres":
+            cur = conn.cursor()
+            cur.execute(f"DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '{days_to_keep} days'")
+            deleted = cur.rowcount
+            conn.commit()
+            cur.close()
+        else:
+            conn.execute(
+                f"DELETE FROM audit_log WHERE created_at < datetime('now', '-{days_to_keep} days')"
+            )
+            deleted = 0
+        return deleted
