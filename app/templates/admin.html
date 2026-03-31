@@ -323,7 +323,7 @@
                 <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
                     <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800 flex justify-between items-center">
                         <h2 class="font-bold text-gray-700 dark:text-gray-200">已绑定账户</h2>
-                        <button class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition">+ 绑定新账户</button>
+                        <button @click="bindGithub" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition">+ 绑定新账户</button>
                     </div>
                     <div class="p-6">
                         <div v-if="oauthAccounts.length > 0" class="space-y-3">
@@ -338,7 +338,7 @@
                                 <div class="flex items-center gap-3">
                                     <span :class="acc.status === 'active' ? 'text-green-600' : 'text-red-500'" class="text-xs font-bold">[[ acc.status === 'active' ? '✅ 有效' : '❌ 过期' ]]</span>
                                     <button class="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100">刷新</button>
-                                    <button class="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">解绑</button>
+                                    <button @click="unbindOAuth(acc.provider)" class="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50">解绑</button>
                                 </div>
                             </div>
                         </div>
@@ -438,7 +438,7 @@
                         </div>
                         <div class="mb-4">
                             <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">消息</label>
-                            <textarea v-model="testMessages" rows="4" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 dark:text-gray-200 font-mono" placeholder='[{"role":"user","content":"你好"}]'></textarea>
+                            <textarea v-model="testMessages" rows="4" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 dark:text-gray-200 font-mono" placeholder='[{"role":"user","content":"Hello"}]'></textarea>
                         </div>
                         <button @click="runTest" :disabled="testing" class="bg-indigo-600 text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 transition flex items-center gap-2">
                             <span v-if="testing" class="spinner">⟳</span>
@@ -561,12 +561,14 @@ const app = createApp({
         const isEdit = ref(false);
         const keyForm = ref({ key: '', name: '', allowAll: true, selectedModels: [] });
         const testing = ref('');
+            const poolLoading = ref({});
         const showTokenModal = ref(false);
         const editTokenSource = ref('');
         const editTokenValue = ref('');
         const healthStatus = ref('checking');
         const rateLimit = ref({ remaining: 60, limit: 60 });
         const lastRefresh = ref(null);
+            const autoRefresh = ref(false);
         const isDark = ref(false);
         const modelSearch = ref('');
         const selectedModels = ref([]);
@@ -627,7 +629,27 @@ const app = createApp({
             lastRefresh.value = new Date();
         });
 
-        const fetchOpenAIUsage = async () => {
+        
+        const loadOauthAccounts = async () => {
+            try {
+                const res = await fetch('/api/oauth/accounts');
+                const d = await res.json();
+                if (d.status === 'success') oauthAccounts.value = d.data || [];
+            } catch(e) { console.error('Failed to load OAuth accounts:', e); }
+        };
+
+        const bindGithub = () => { window.location.href = '/oauth/github'; };
+        
+        const unbindOAuth = async (provider) => {
+            if (!confirm(`确认解绑 ${provider.toUpperCase()}?`)) return;
+            try {
+                await fetch(`/api/oauth/accounts/${provider}`, {method:'DELETE'});
+                showToast('已解绑', 'success');
+                await loadOauthAccounts();
+            } catch(e) { showToast('解绑失败', 'error'); }
+        };
+
+const fetchOpenAIUsage = async () => {
             loadingUsage.value = true;
             try {
                 const res = await fetch('/api/pool/openai/subscription');
@@ -770,8 +792,9 @@ const app = createApp({
             pool, models, expired, keys, sources, activeSourceFilters, showFetchModal, fetchSource, fetchToken, fetching,
             showManualModelModal, newMName, newMSource, showKeyModal, isEdit, keyForm, testing, showTokenModal, editTokenSource, editTokenValue,
             healthStatus, rateLimit, lastRefresh, isDark, modelSearch, selectedModels, toasts, currentTab, oauthAccounts,
-            openaiUsage, loadingUsage, testModel, testKey, testMessages, testResult,
+            openaiUsage, loadingUsage, poolLoading, testModel, testKey, testMessages, testResult,
             filteredModels, activePoolCount, sourceColor,
+            loadOauthAccounts, bindGithub, unbindOAuth,
             toggleDark, fetchOpenAIUsage, testPool, delPool, openEditToken, submitToken, doFetch, addModel,
             toggleModelSelect, doBatchDelete, openKeyModal, submitKey, delKey, copyKey, maskKey, logout, formatTime, runTest, showToast
         };
