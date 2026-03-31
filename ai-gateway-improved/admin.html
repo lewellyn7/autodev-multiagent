@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Gateway Admin - 优化版</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            source: { chatgpt: '#10a37f', deepseek: '#0066cc', moonshot: '#8b5cf6', openai: '#0066cc', claude: '#d4a574', gemini: '#ea4335', qwen: '#ff6b00' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [v-cloak] { display: none; }
+    .modal-mask { position: fixed; z-index: 50; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; }
+    .modal-container { background-color: #fff; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.15); padding: 24px; width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; }
+    .dark .modal-container { background-color: #1f2937; }
+    .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .fade-enter-active, .fade-leave-active { transition: all 0.3s ease; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; transform: translateY(-4px); }
+    .drawer-enter-active, .drawer-leave-active { transition: all 0.3s ease; }
+    .drawer-enter-from, .drawer-leave-to { transform: translateX(100%); opacity: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { animation: spin 0.8s linear infinite; }
+    @keyframes healthPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); } 50% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); } }
+    .health-pulse { animation: healthPulse 2s infinite; }
+    .source-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; color: white; text-transform: uppercase; letter-spacing: 0.5px; }
+    .toggle-bg { width: 40px; height: 22px; border-radius: 11px; position: relative; cursor: pointer; transition: background 0.3s; }
+    .toggle-knob { width: 18px; height: 18px; border-radius: 50%; background: white; position: absolute; top: 2px; left: 2px; transition: transform 0.3s; }
+    input:checked + .toggle-bg { background: #4b5563; }
+    input:checked + .toggle-bg .toggle-knob { transform: translateX(18px); }
+    .nav-item { transition: all 0.2s; }
+    .nav-item:hover { background: rgba(99,102,241,0.1); }
+    .nav-item.active { background: rgba(99,102,241,0.15); color: #6366f1; border-right: 3px solid #6366f1; }
+    .card { transition: all 0.2s; }
+    .card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.08); }
+    .dark .card:hover { box-shadow: 0 8px 25px rgba(0,0,0,0.3); }
+    .progress-bar { transition: width 0.5s ease; }
+    .account-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+    .fallback-chain { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .fallback-step { display: flex; align-items: center; gap: 4px; padding: 4px 8px; background: #f3f4f6; border-radius: 6px; font-size: 11px; }
+    .dark .fallback-step { background: #374151; }
+    .notification-badge { position: absolute; top: -2px; right: -2px; background: #ef4444; color: white; border-radius: 999px; padding: 1px 4px; font-size: 9px; font-weight: bold; min-width: 16px; text-align: center; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    .dark ::-webkit-scrollbar-thumb { background: #4b5563; }
+  </style>
+</head>
+<body class="bg-gray-100 dark:bg-gray-900 min-h-screen flex">
+<div id="app" v-cloak class="flex w-full">
+  <!-- Sidebar -->
+  <aside class="w-56 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col h-screen sticky top-0">
+    <div class="p-4 border-b border-gray-100 dark:border-gray-700">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">🤖</span>
+        <div>
+          <div class="font-bold text-gray-800 dark:text-white text-sm">AI Gateway</div>
+          <div class="text-[10px] text-gray-400">v2.0.0 Optimized</div>
+        </div>
+      </div>
+    </div>
+    <nav class="flex-1 py-3 overflow-y-auto">
+      <div class="px-3 mb-1">
+        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">监控</div>
+        <a @click="currentTab='dashboard'" :class="['nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm', currentTab==='dashboard' ? 'active' : 'text-gray-600 dark:text-gray-300']"><span>📊</span><span>概览仪表盘</span></a>
+        <a @click="currentTab='usage'" :class="['nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm', currentTab==='usage' ? 'active' : 'text-gray-600 dark:text-gray-300']"><span>💰</span><span>用量查询</span></a>
+      </div>
+      <div class="px-3 mb-1">
+        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">账户</div>
+        <a @click="currentTab='pool'" :class="['nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm', currentTab==='pool' ? 'active' : 'text-gray-600 dark:text-gray-300']"><span>🍪</span><span>代理池</span></a>
+        <a @click="currentTab='oauth'" :class="['nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm', currentTab==='oauth' ? 'active' : 'text-gray-600 dark:text-gray-300']"><span>🔗</span><span>OAuth</span></a>
+        <a @click="currentTab='models'" :class="['nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm', currentTab==='models' ? 'active' : 'text-gray-600 dark:text-gray-300']"><span>📚</span><span>模型库</span></a>
+      </div>
+      <div class="px-3 mb-1">
+        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider px-2 mb-2">工具</div>
+        <a @click="currentTab='keys'" :class="['nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm', currentTab==='keys' ? 'active' : 'text-gray-600 dark:text-gray-300']"><span>🔑</span><span>API Keys</span></a>
+        <a @click="currentTab='test'" :class="['nav-item flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm', currentTab==='test' ? 'active' : 'text-gray-600 dark:text-gray-300']"><span>⚡</span><span>API 测试台</span></a>
+      </div>
+    </nav>
+    <div class="p-3 border-t border-gray-100 dark:border-gray-700">
+      <div class="flex items-center justify-between mb-3 px-2">
+        <span class="text-[10px] text-gray-400">暗色模式</span>
+        <label class="cursor-pointer"><input type="checkbox" @change="toggleDark" :checked="isDark" class="hidden"><div class="toggle-bg" :class="isDark ? 'bg-indigo-600' : 'bg-gray-300'"><div class="toggle-knob" :style="isDark ? 'transform:translateX(18px)' : ''"></div></div></label>
+      </div>
+      <button @click="logout" class="w-full text-xs text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 py-1.5 rounded-lg transition">退出登录</button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex-1 overflow-y-auto h-screen relative">
+    <!-- Top Bar with Health & Notifications -->
+    <div class="sticky top-0 z-40 bg-gray-100 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2 px-3 py-1.5 bg-white dark:bg-gray-800 rounded-full border border-gray-200 dark:border-gray-700">
+          <span class="w-2.5 h-2.5 rounded-full" :class="healthStatus === 'healthy' ? 'bg-green-500 health-pulse' : 'bg-red-500'"></span>
+          <span class="text-xs font-medium" :class="healthStatus === 'healthy' ? 'text-green-600' : 'text-red-500'">{{ healthStatus === 'healthy' ? '系统健康' : '系统异常' }}</span>
+        </div>
+        <div class="text-xs text-gray-500">最后更新：{{ formatTime(lastRefresh) }}</div>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="relative">
+          <button @click="showNotifications = !showNotifications" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition relative">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+            <span v-if="notifications.filter(n => !n.read).length > 0" class="notification-badge">{{ notifications.filter(n => !n.read).length }}</span>
+          </button>
+          <transition name="fade">
+            <div v-if="showNotifications" class="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                <h3 class="font-bold text-sm text-gray-800 dark:text-white">通知中心</h3>
+                <button @click="markAllRead" class="text-xs text-indigo-600 hover:underline">全部已读</button>
+              </div>
+              <div class="max-h-64 overflow-y-auto">
+                <div v-for="n in notifications" :key="n.id" @click="markRead(n.id)" class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition" :class="!n.read ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''">
+                  <div class="flex items-start gap-2">
+                    <span class="text-lg">{{ n.icon }}</span>
+                    <div class="flex-1">
+                      <div class="text-xs font-medium text-gray-800 dark:text-white">{{ n.title }}</div>
+                      <div class="text-xs text-gray-500 mt-0.5">{{ n.message }}</div>
+                      <div class="text-[10px] text-gray-400 mt-1">{{ formatTime(n.time) }}</div>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="notifications.length === 0" class="p-8 text-center text-gray-400 text-xs">暂无通知</div>
+              </div>
+            </div>
+          </transition>
+        </div>
+        <button @click="showLogDrawer = true" class="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white flex items-center gap-1 text-xs">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+          日志
+        </button>
+      </div>
+    </div>
+
+    <div class="p-6 max-w-7xl mx-auto">
+      <!-- Dashboard -->
+      <div v-if="currentTab==='dashboard'">
+        <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">📊 概览仪表盘</h1>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div class="card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 border-t-4 border-indigo-500">
+            <div class="text-[10px] text-gray-400 uppercase">活跃模型</div>
+            <div class="text-2xl font-bold text-gray-800 dark:text-white">{{ models.length }}</div>
+          </div>
+          <div class="card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 border-t-4 border-green-500">
+            <div class="text-[10px] text-gray-400 uppercase">有效代理</div>
+            <div class="text-2xl font-bold text-green-600 dark:text-green-400">{{ activePoolCount }}</div>
+          </div>
+          <div class="card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 border-t-4 border-amber-500">
+            <div class="text-[10px] text-gray-400 uppercase">API Keys</div>
+            <div class="text-2xl font-bold text-gray-800 dark:text-white">{{ keys.length }}</div>
+          </div>
+          <div class="card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 border-t-4 border-red-500">
+            <div class="text-[10px] text-gray-400 uppercase">有效率</div>
+            <div class="text-2xl font-bold" :class="pool.length > 0 && (activePoolCount / pool.length * 100 > 50) ? 'text-green-600' : 'text-red-500'">{{ pool.length > 0 ? Math.round(activePoolCount / pool.length * 100) + '%' : '0%' }}</div>
+          </div>
+        </div>
+
+        <!-- Account Pool Visualization -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
+          <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+            <h2 class="font-bold text-gray-700 dark:text-gray-200">🍪 账户池可视化</h2>
+            <button @click="currentTab='pool'" class="text-xs text-indigo-600 hover:underline">查看全部 →</button>
+          </div>
+          <div class="p-6">
+            <div class="account-grid">
+              <div v-for="p in pool.slice(0,8)" :key="p.source" class="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4 border border-gray-200 dark:border-gray-600">
+                <div class="flex items-center justify-between mb-3">
+                  <span class="source-badge" :style="'background:'+sourceColor(p.source)">{{ p.source.substring(0,6) }}</span>
+                  <span :class="p.status === 'active' ? 'text-green-600' : 'text-red-500'">{{ p.status === 'active' ? '✅' : '❌' }}</span>
+                </div>
+                <div class="mb-2">
+                  <div class="flex justify-between text-xs text-gray-500 mb-1"><span>健康度</span><span :class="p.health_score > 80 ? 'text-green-600' : p.health_score > 50 ? 'text-yellow-600' : 'text-red-600'">{{ p.health_score || 0 }}%</span></div>
+                  <div class="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                    <div class="h-full progress-bar rounded-full" :class="p.health_score > 80 ? 'bg-green-500' : p.health_score > 50 ? 'bg-yellow-500' : 'bg-red-500'" :style="'width:'+ (p.health_score || 0) +'%'"></div>
+                  </div>
+                </div>
+                <div class="text-xs text-gray-400">{{ p.cookie_count }} cookies</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fallback Chain -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
+          <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700"><h2 class="font-bold text-gray-700 dark:text-gray-200">🔄 回退链可视化</h2></div>
+          <div class="p-6">
+            <div class="space-y-4">
+              <div v-for="(chain, idx) in fallbackChains" :key="idx" class="flex items-center gap-4">
+                <div class="text-xs font-bold text-gray-500 w-24">{{ chain.model }}</div>
+                <div class="flex-1 fallback-chain">
+                  <div v-for="(provider, i) in chain.providers" :key="i" class="flex items-center">
+                    <span v-if="i > 0" class="fallback-arrow mx-1">→</span>
+                    <div class="fallback-step" :class="i === 0 ? 'ring-2 ring-indigo-500' : ''">
+                      <span class="source-badge mr-1" :style="'background:'+sourceColor(provider.source)">{{ provider.source.substring(0,3) }}</span>
+                      <span class="text-gray-700 dark:text-gray-200">{{ provider.model }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="fallbackChains.length === 0" class="text-center text-gray-400 text-sm py-4">暂无回退链配置</div>
+          </div>
+        </div>
+
+        <!-- Health Status -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="font-bold text-gray-700 dark:text-gray-200">🟢 系统健康</h2>
+            <span class="text-xs text-gray-400">最后更新：{{ formatTime(lastRefresh) }}</span>
+          </div>
+          <div class="grid grid-cols-3 gap-4">
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full" :class="healthStatus === 'healthy' ? 'bg-green-500' : 'bg-red-500'"></span><span class="text-sm text-gray-600 dark:text-gray-300">API Gateway</span><span class="text-xs" :class="healthStatus === 'healthy' ? 'text-green-600' : 'text-red-500'">{{ healthStatus === 'healthy' ? '正常' : '异常' }}</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-green-500"></span><span class="text-sm text-gray-600 dark:text-gray-300">Database</span><span class="text-xs text-green-600">连接正常</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded-full bg-green-500"></span><span class="text-sm text-gray-600 dark:text-gray-300">Rate Limit</span><span class="text-xs text-green-600">{{ rateLimit.remaining }}/{{ rateLimit.limit }}</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Usage Tab -->
+      <div v-if="currentTab==='usage'">
+        <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">💰 用量查询</h1>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+            <h2 class="font-bold text-gray-700 dark:text-gray-200">🍪 OpenAI 账户</h2>
+            <button @click="fetchOpenAIUsage" :disabled="loadingUsage" class="bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-indigo-700 transition flex items-center gap-1.5"><span v-if="loadingUsage" class="spinner">⟳</span>{{ loadingUsage ? '刷新中...' : '🔄 刷新' }}</button>
+          </div>
+          <div v-if="openaiUsage" class="p-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+              <div class="bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 rounded-xl p-5">
+                <div class="text-[10px] text-indigo-400 uppercase mb-1">本月使用</div>
+                <div class="text-2xl font-bold text-indigo-600 dark:text-indigo-400">${{ openaiUsage.total_usage_usd }}</div>
+                <div class="text-xs text-gray-400 mt-1">共 {{ openaiUsage.daily_avg }}/天</div>
+              </div>
+              <div class="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-xl p-5">
+                <div class="text-[10px] text-green-400 uppercase mb-1">剩余配额</div>
+                <div class="text-2xl font-bold text-green-600 dark:text-green-400">${{ openaiUsage.remaining_usd }}</div>
+                <div class="text-xs text-gray-400 mt-1">上限 ${{ openaiUsage.soft_limit_usd }}</div>
+              </div>
+              <div class="bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 rounded-xl p-5">
+                <div class="text-[10px] text-orange-400 uppercase mb-1">重置时间</div>
+                <div class="text-2xl font-bold text-orange-600 dark:text-orange-400">{{ openaiUsage.days_until_reset }} 天</div>
+                <div class="text-xs text-gray-400 mt-1">{{ new Date(openaiUsage.reset_date).toLocaleDateString('zh-CN') }}</div>
+              </div>
+            </div>
+            <div class="mb-4">
+              <div class="flex justify-between text-xs text-gray-500 mb-1.5"><span>使用进度</span><span>{{ openaiUsage.usage_percent }}%</span></div>
+              <div class="h-3 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div class="h-full progress-bar rounded-full" :class="openaiUsage.usage_percent > 90 ? 'bg-red-500' : openaiUsage.usage_percent > 70 ? 'bg-orange-500' : 'bg-indigo-500'" :style="'width:'+Math.min(openaiUsage.usage_percent, 100)+'%'"></div>
+              </div>
+            </div>
+            <div class="mb-6">
+              <h3 class="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3">📈 每日趋势</h3>
+              <div class="flex items-end gap-2 h-32">
+                <div v-for="(day, i) in dailyTrend" :key="i" class="flex-1 flex flex-col items-center gap-1">
+                  <div class="w-full bg-indigo-200 dark:bg-indigo-800 rounded-t" :style="'height:'+ (day.value / Math.max(...dailyTrend.map(d=>d.value)) * 100) + '%'"></div>
+                  <div class="text-[10px] text-gray-500">{{ day.label }}</div>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4 text-sm">
+              <div class="flex justify-between"><span class="text-gray-400">账户 ID</span><span class="text-gray-600 dark:text-gray-300 font-mono text-xs">{{ openaiUsage.account_id || '-' }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-400">套餐</span><span class="text-gray-600 dark:text-gray-300">{{ openaiUsage.plan_name }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-400">状态</span><span :class="openaiUsage.is_active ? 'text-green-600' : 'text-red-500'">{{ openaiUsage.is_active ? '✅ 活跃' : '❌ 未激活' }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-400">支付方式</span><span :class="openaiUsage.has_payment_method ? 'text-green-600' : 'text-red-500'">{{ openaiUsage.has_payment_method ? '✅ 已绑定' : '❌ 未绑定' }}</span></div>
+            </div>
+          </div>
+          <div v-else class="p-12 text-center">
+            <div class="text-4xl mb-2">💳</div>
+            <div class="text-gray-400 text-sm mb-4">暂无 OpenAI 账户数据</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pool Tab -->
+      <div v-if="currentTab==='pool'">
+        <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">🍪 代理池管理</h1>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <table class="w-full text-sm text-left">
+            <thead class="bg-gray-50 dark:bg-gray-800/50 text-gray-400 dark:text-gray-500 text-[10px] uppercase">
+              <tr><th class="px-6 py-3">来源</th><th class="px-6 py-3">状态</th><th class="px-6 py-3">数量</th><th class="px-6 py-3">健康度</th><th class="px-6 py-3">操作</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in pool" :key="p.source" class="border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                <td class="px-6 py-4"><div class="flex items-center gap-2"><span class="source-badge" :style="'background:'+sourceColor(p.source)">{{ p.source.substring(0,6) }}</span><span class="font-bold uppercase text-gray-700 dark:text-gray-200">{{ p.source }}</span></div></td>
+                <td class="px-6 py-4"><span :class="p.status === 'active' ? 'text-green-600 bg-green-50 dark:bg-green-900/30' : 'text-red-600 bg-red-50 dark:bg-red-900/30'" class="px-2.5 py-1 rounded-full text-xs font-bold">{{ p.status === 'active' ? '✅ 有效' : '❌ 失效' }}</span></td>
+                <td class="px-6 py-4"><span class="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded text-xs font-mono">{{ p.cookie_count }}</span></td>
+                <td class="px-6 py-4"><div class="flex items-center gap-2"><div class="w-24 h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden"><div class="h-full progress-bar rounded-full" :class="p.health_score > 80 ? 'bg-green-500' : p.health_score > 50 ? 'bg-yellow-500' : 'bg-red-500'" :style="'width:'+ (p.health_score || 0) +'%'"></div></div><span class="text-xs text-gray-500">{{ p.health_score || 0 }}%</span></div></td>
+                <td class="px-6 py-4"><div class="flex gap-3"><button @click="testPool(p.source)" class="text-blue-600 hover:underline text-xs">{{ testing===p.source?'检测中':'检测' }}</button><button @click="openEditToken(p.source)" class="text-indigo-600 hover:underline text-xs">✏️ 填 Key</button><button @click="delPool(p.source)" class="text-red-500 hover:underline text-xs">删除</button></div></td>
+              </tr>
+              <tr v-if="pool.length===0"><td colspan="5" class="p-12 text-center text-gray-400">暂无代理池数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- OAuth Tab -->
+      <div v-if="currentTab==='oauth'">
+        <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">🔗 OAuth 账户管理</h1>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+          <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+            <h2 class="font-bold text-gray-700 dark:text-gray-200">已绑定账户</h2>
+            <button class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 transition">+ 绑定新账户</button>
+          </div>
+          <div class="p-6">
+            <div v-if="oauthAccounts.length > 0" class="space-y-3">
+              <div v-for="acc in oauthAccounts" :key="acc.id" class="flex items-center justify-between p-4 border border-gray-100 dark:border-gray-700 rounded-xl">
+                <div class="flex items-center gap-3">
+                  <span class="text-2xl">{{ acc.provider === 'google' ? '🔵' : acc.provider === 'github' ? '⚫' : '🟣' }}</span>
+                  <div>
+                    <div class="font-bold text-gray-800 dark:text-white">{{ acc.provider.toUpperCase() }}</div>
+                    <div class="text-xs text-gray-400">{{ acc.email || '已绑定' }}</div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span :class="acc.status === 'active' ? 'text-green-600' : 'text-red-500'" class="text-xs font-bold">{{ acc.status === 'active' ? '✅ 有效' : '❌ 过期' }}</span>
+                  <button @click="refreshOAuth(acc.id)" class="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700">刷新</button>
+                  <button @click="unbindOAuth(acc.id)" class="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20">解绑</button>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-center py-12">
+              <div class="text-5xl mb-3">🔗</div>
+              <div class="text-gray-400 text-sm mb-4">暂无已绑定的 OAuth 账户</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Models Tab -->
+      <div v-if="currentTab==='models'">
+        <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">📚 模型库</h1>
+      <div class="flex flex-wrap gap-3 mb-4">
+        <div class="relative flex-1 max-w-xs">
+          <input v-model="modelSearch" type="text" placeholder="搜索模型..." class="pl-9 pr-3 py-2 text-sm border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 dark:text-gray-200 w-full">
+          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+        </div>
+        <button @click="showManualModelModal=true" class="text-gray-600 dark:text-gray-300 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-gray-600">手动添加</button>
+        <button @click="showFetchModal=true" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-700">⚡ 自动获取</button>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+        <div class="flex flex-wrap gap-2 max-h-[400px] overflow-y-auto">
+          <div v-for="m in filteredModels" :key="m.id" @click="toggleModelSelect(m.id)" class="model-chip cursor-pointer border p-2 rounded-lg" :class="selectedModels.includes(m.id) ? 'border-indigo-400 bg-indigo-50 dark:bg-indigo-900/30' : 'border-gray-200 dark:border-gray-600'">
+            <span class="source-badge mr-1" :style="'background:'+sourceColor(m.source)">{{ m.source.substring(0,3) }}</span>
+            <span class="font-medium text-gray-700 dark:text-gray-200">{{ m.name }}</span>
+          </div>
+        </div>
+        <div v-if="selectedModels.length > 0" class="mt-4 pt-4 border-t flex justify-between items-center">
+          <span class="text-xs text-gray-400">已选 {{ selectedModels.length }} 项</span>
+          <button @click="doBatchDelete" class="bg-red-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold">🗑 批量删除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Keys Tab -->
+    <div v-if="currentTab==='keys'">
+      <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">🔑 API Keys</h1>
+      <div class="flex justify-end mb-4"><button @click="openKeyModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-700">+ 生成新 Key</button></div>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div v-for="k in keys" :key="k.key" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5 card">
+          <div class="flex justify-between items-start mb-3">
+            <div class="font-bold text-gray-800 dark:text-white">{{ k.name }}</div>
+            <div class="flex gap-1">
+              <button @click="copyKey(k.key)" class="text-xs text-blue-600 px-2 py-1 rounded hover:bg-blue-50">复制</button>
+              <button @click="openKeyModal(k)" class="text-xs text-indigo-600 px-2 py-1 rounded hover:bg-indigo-50">编辑</button>
+              <button @click="delKey(k.key)" class="text-xs text-red-500 px-2 py-1 rounded hover:bg-red-50">删除</button>
+            </div>
+          </div>
+          <div class="font-mono text-xs text-gray-400 bg-gray-50 dark:bg-gray-900 px-3 py-2 rounded-lg mb-3 truncate">{{ maskKey(k.key) }}</div>
+          <div v-if="!k.allowed_models" class="text-xs text-green-600 font-bold">✅ 允许所有模型</div>
+          <div v-else class="flex flex-wrap gap-1">
+            <span v-for="m in k.allowed_models.split(',').slice(0,3)" :key="m" class="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">{{ m.trim() }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- API Test Tab with History Sidebar -->
+    <div v-if="currentTab==='test'">
+      <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">⚡ API 测试台</h1>
+      <div class="grid grid-cols-4 gap-6">
+        <div class="col-span-3">
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden mb-6">
+            <div class="p-6 border-b border-gray-100 dark:border-gray-700">
+              <div class="flex flex-wrap gap-4 mb-4">
+                <div class="flex-1 min-w-[200px]">
+                  <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">模型</label>
+                  <select v-model="testModel" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 dark:text-gray-200">
+                    <option v-for="m in models.slice(0,20)" :key="m.id" :value="m.name">{{ m.name }} ({{ m.source }})</option>
+                  </select>
+                </div>
+                <div class="flex-1 min-w-[200px]">
+                  <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">Key</label>
+                  <select v-model="testKey" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 dark:text-gray-200">
+                    <option v-for="k in keys" :key="k.key" :value="k.key">{{ k.name }}</option>
+                  </select>
+                </div>
+              </div>
+              <div class="mb-4">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase mb-1.5">消息</label>
+                <textarea v-model="testMessages" rows="4" class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-700 dark:text-gray-200 font-mono" placeholder='[{"role":"user","content":"你好"}]'></textarea>
+              </div>
+              <button @click="runTest" :disabled="testing" class="bg-indigo-600 text-white px-6 py-2 rounded-lg text-sm font-bold hover:bg-indigo-700 transition flex items-center gap-2">
+                <span v-if="testing" class="spinner">⟳</span> {{ testing ? '测试中...' : '▶ 发送请求' }}
+              </button>
+            </div>
+            <div class="p-6">
+              <div v-if="testResult" class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 font-mono text-xs overflow-x-auto whitespace-pre-wrap" :class="testResult.error ? 'text-red-500' : 'text-gray-700 dark:text-gray-300'">{{ testResult.error || testResult.response }}</div>
+              <div v-else class="text-center text-gray-400 text-sm py-8">发送请求后显示响应结果</div>
+            </div>
+          </div>
+        </div>
+        <!-- Request History Sidebar -->
+        <div class="col-span-1">
+          <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden sticky top-4">
+            <div class="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+              <h3 class="font-bold text-sm">请求历史</h3>
+              <div class="flex gap-2">
+                <button @click="exportHistory" class="text-xs text-indigo-600 hover:underline">导出</button>
+                <button @click="importHistory" class="text-xs text-indigo-600 hover:underline">导入</button>
+              </div>
+            </div>
+            <div class="max-h-[600px] overflow-y-auto p-3">
+              <div v-for="(req, i) in requestHistory" :key="i" @click="loadRequest(req)" class="p-3 mb-2 bg-gray-50 dark:bg-gray-700/50 rounded-lg cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                <div class="text-xs font-medium truncate">{{ req.model }}</div>
+                <div class="text-[10px] text-gray-500">{{ formatTime(req.time) }}</div>
+                <div class="text-[10px] mt-1" :class="req.success ? 'text-green-600' : 'text-red-500'">{{ req.success ? '✅ 成功' : '❌ 失败' }}</div>
+              </div>
+              <div v-if="requestHistory.length === 0" class="text-center text-gray-400 text-xs py-8">暂无历史记录</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Real-time Log Drawer -->
+<transition name="drawer">
+  <div v-if="showLogDrawer" class="fixed inset-0 z-50 bg-black/50" @click="showLogDrawer=false">
+    <div class="absolute right-0 top-0 h-full w-96 bg-white dark:bg-gray-800 shadow-2xl" @click.stop>
+      <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+        <h3 class="font-bold text-gray-800 dark:text-white">📝 实时请求日志</h3>
+        <button @click="showLogDrawer=false" class="text-gray-500 hover:text-gray-700 text-xl">×</button>
+      </div>
+      <div class="overflow-y-auto h-[calc(100%-60px)] p-4 space-y-3">
+        <div v-for="(log, i) in requestLogs" :key="i" class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border-l-4" :class="log.status >= 400 ? 'border-red-500' : 'border-green-500'">
+          <div class="flex justify-between items-start">
+            <span class="text-xs font-mono" :class="log.status >= 400 ? 'text-red-600' : 'text-green-600'">{{ log.status }}</span>
+            <span class="text-[10px] text-gray-400">{{ formatTime(log.time) }}</span>
+          </div>
+          <div class="text-xs font-medium mt-1">{{ log.method }} {{ log.path }}</div>
+          <div class="text-[10px] text-gray-500 mt-1">{{ log.model }}</div>
+        </div>
+        <div v-if="requestLogs.length === 0" class="text-center text-gray-400 text-sm py-8">暂无请求日志</div>
+      </div>
+    </div>
+  </div>
+</transition>
+
+<!-- Modals -->
+<div v-if="showTokenModal" class="modal-mask" @click.self="showTokenModal=false">
+  <div class="modal-container">
+    <h3 class="text-lg font-bold mb-4 text-gray-800 dark:text-white">✏️ 编辑凭证：{{ editTokenSource.toUpperCase() }}</h3>
+    <textarea v-model="editTokenValue" class="w-full border border-gray-200 dark:border-gray-600 p-3 rounded-lg text-sm font-mono bg-gray-50 dark:bg-gray-900 dark:text-gray-200" style="min-height:120px"></textarea>
+    <div class="flex justify-end gap-2 mt-4">
+      <button @click="showTokenModal=false" class="px-4 py-2 text-gray-600 dark:text-gray-300 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">取消</button>
+      <button @click="submitToken" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<div v-if="showKeyModal" class="modal-mask" @click.self="showKeyModal=false">
+  <div class="modal-container">
+    <h3 class="text-lg font-bold mb-4 text-gray-800 dark:text-white">{{ isEdit ? '✏️ 修改密钥' : '🔑 创建新密钥' }}</h3>
+    <div class="mb-4">
+      <label class="block text-xs font-bold text-gray-500 mb-1.5">备注名称</label>
+      <input v-model="keyForm.name" class="w-full border border-gray-200 dark:border-gray-600 p-2.5 rounded-lg text-sm bg-gray-50 dark:bg-gray-900 dark:text-gray-200">
+    </div>
+    <div class="flex justify-between items-center mb-4">
+      <label class="text-xs font-bold text-gray-500">模型权限</label>
+      <label class="flex items-center gap-2"><span class="text-xs text-gray-600 dark:text-gray-300">允许所有</span><input type="checkbox" v-model="keyForm.allowAll" class="rounded text-green-600"></label>
+    </div>
+    <div v-if="!keyForm.allowAll" class="border border-gray-200 dark:border-gray-600 rounded-lg p-3 max-h-[200px] overflow-y-auto">
+      <div class="checkbox-grid">
+        <label v-for="m in models" :key="m.id" class="flex items-center gap-2 p-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer">
+          <input type="checkbox" :value="m.name" v-model="keyForm.selectedModels" class="rounded text-blue-600">
+          <span class="text-xs truncate">{{ m.name }}</span>
+        </label>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 mt-6">
+      <button @click="showKeyModal=false" class="px-4 py-2 text-gray-600 dark:text-gray-300 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">取消</button>
+      <button @click="submitKey" class="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<div v-if="showFetchModal" class="modal-mask" @click.self="showFetchModal=false">
+  <div class="modal-container">
+    <h3 class="text-lg font-bold mb-4 text-gray-800 dark:text-white">⚡ 自动获取模型</h3>
+    <div class="mb-4">
+      <label class="block text-xs font-bold text-gray-500 mb-1.5">来源</label>
+      <select v-model="fetchSource" class="w-full border border-gray-200 dark:border-gray-600 p-2.5 rounded-lg bg-white dark:bg-gray-900 dark:text-gray-200">
+        <option v-for="s in sources" :value="s">{{s.toUpperCase()}}</option>
+      </select>
+    </div>
+    <div class="mb-6">
+      <label class="block text-xs font-bold text-gray-500 mb-1.5">API Key <span class="text-gray-400">(可选)</span></label>
+      <input v-model="fetchToken" class="w-full border border-gray-200 dark:border-gray-600 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-900 dark:text-gray-200" placeholder="自动从池中读取">
+    </div>
+    <div class="flex justify-end gap-2">
+      <button @click="showFetchModal=false" class="px-4 py-2 text-gray-600 dark:text-gray-300 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">取消</button>
+      <button @click="doFetch" :disabled="fetching" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 flex items-center gap-2 disabled:opacity-50"><span v-if="fetching" class="spinner">⟳</span> {{ fetching ? '获取中...' : '⚡ 获取' }}</button>
+    </div>
+  </div>
+</div>
+
+<div v-if="showManualModelModal" class="modal-mask" @click.self="showManualModelModal=false">
+  <div class="modal-container">
+    <h3 class="text-lg font-bold mb-4 text-gray-800 dark:text-white">➕ 手动添加模型</h3>
+    <input v-model="newMName" class="w-full border border-gray-200 dark:border-gray-600 p-2.5 rounded-lg mb-4 bg-gray-50 dark:bg-gray-900 dark:text-gray-200" placeholder="模型 ID">
+    <select v-model="newMSource" class="w-full border border-gray-200 dark:border-gray-600 p-2.5 rounded-lg mb-6 bg-white dark:bg-gray-900 dark:text-gray-200">
+      <option v-for="s in sources" :value="s">{{s}}</option>
+    </select>
+    <div class="flex justify-end gap-2">
+      <button @click="showManualModelModal=false" class="px-4 py-2 text-gray-600 dark:text-gray-300 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">取消</button>
+      <button @click="addModel" class="px-4 py-2 bg-gray-800 dark:bg-gray-700 text-white rounded-lg text-sm hover:bg-gray-900 dark:hover:bg-gray-600">➕ 添加</button>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+createApp({
+  delimiters: ['{{', '}}'],
+  setup() {
+    const pool = ref([]);
+    const models = ref([]);
+    const keys = ref([]);
+    const sources = ['chatgpt','deepseek','moonshot','openai','claude','gemini','qwen'];
+    const showFetchModal = ref(false);
+    const fetchSource = ref('chatgpt');
+    const fetchToken = ref('');
+    const fetching = ref(false);
+    const showManualModelModal = ref(false);
+    const newMName = ref('');
+    const newMSource = ref('');
+    const showKeyModal = ref(false);
+    const isEdit = ref(false);
+    const keyForm = ref({ key: '', name: '', allowAll: true, selectedModels: [] });
+    const testing = ref('');
+    const showTokenModal = ref(false);
+    const editTokenSource = ref('');
+    const editTokenValue = ref('');
+    const healthStatus = ref('healthy');
+    const rateLimit = ref({ remaining: 60, limit: 60 });
+    const lastRefresh = ref(new Date());
+    const isDark = ref(false);
+    const modelSearch = ref('');
+    const selectedModels = ref([]);
+    const currentTab = ref('dashboard');
+    const oauthAccounts = ref([]);
+    const openaiUsage = ref(null);
+    const loadingUsage = ref(false);
+    const testModel = ref('');
+    const testKey = ref('');
+    const testMessages = ref('[{"role":"user","content":"Hello"}]');
+    const testResult = ref(null);
+    const showLogDrawer = ref(false);
+    const requestLogs = ref([]);
+    const requestHistory = ref([]);
+    const showNotifications = ref(false);
+    const notifications = ref([]);
+    const fallbackChains = ref([]);
+    const dailyTrend = ref([]);
+
+    const sourceColors = { chatgpt: '#10a37f', deepseek: '#0066cc', moonshot: '#8b5cf6', openai: '#0066cc', claude: '#d4a574', gemini: '#ea4335', qwen: '#ff6b00' };
+    const sourceColor = (s) => sourceColors[s] || '#6b7280';
+    const getHealthColor = (score) => score > 80 ? 'text-green-600' : score > 50 ? 'text-yellow-600' : 'text-red-600';
+    const getHealthColorClass = (score) => score > 80 ? 'bg-green-500' : score > 50 ? 'bg-yellow-500' : 'bg-red-500';
+
+    const filteredModels = computed(() => {
+      let result = models.value.filter(m => m.source && sources.includes(m.source));
+      if (modelSearch.value.trim()) {
+        const q = modelSearch.value.toLowerCase();
+        result = result.filter(m => m.name.toLowerCase().includes(q) || m.source.toLowerCase().includes(q));
+      }
+      return result;
+    });
+
+    const activePoolCount = computed(() => pool.value.filter(p => p.status === 'active').length);
+
+    const toggleDark = () => {
+      isDark.value = !isDark.value;
+      if (isDark.value) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('darkMode', '1');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('darkMode', '0');
+      }
+    };
+
+    const formatTime = (d) => {
+      if (!d) return '';
+      const diff = Math.floor((new Date() - d) / 1000);
+      if (diff < 60) return diff + 's 前';
+      if (diff < 3600) return Math.floor(diff / 60) + 'm 前';
+      return Math.floor(diff / 3600) + 'h 前';
+    };
+
+    const showToast = (msg, type = 'info') => {
+      const id = Date.now();
+      notifications.value.unshift({ id, title: type === 'error' ? '错误' : '通知', message: msg, time: new Date(), icon: type === 'error' ? '❌' : 'ℹ️', read: false });
+    };
+
+    const markRead = (id) => {
+      const n = notifications.value.find(n => n.id === id);
+      if (n) n.read = true;
+    };
+
+    const markAllRead = () => {
+      notifications.value.forEach(n => n.read = true);
+    };
+
+    const fetchOpenAIUsage = async () => {
+      loadingUsage.value = true;
+      try {
+        const res = await fetch('/api/pool/openai/subscription');
+        const d = await res.json();
+        if (d.status === 'success') openaiUsage.value = d.data;
+        else showToast(d.msg || '获取失败', 'error');
+      } catch(e) { showToast('网络错误', 'error'); }
+      loadingUsage.value = false;
+    };
+
+    const testPool = async (s) => {
+      testing.value = s;
+      try {
+        const fd = new FormData();
+        fd.append('source', s);
+        const res = await fetch('/api/pool/test', {method:'POST', body:fd});
+        const d = await res.json();
+        const idx = pool.value.findIndex(p => p.source === s);
+        if (idx !== -1) pool.value[idx].status = d.data.valid ? 'active' : 'expired';
+        showToast(d.data.msg, d.data.valid ? 'success' : 'error');
+      } catch(e) { showToast('检测失败', 'error'); }
+      testing.value = '';
+    };
+
+    const delPool = async (s) => {
+      if (!confirm('确认删除 ' + s + '?')) return;
+      await fetch('/api/pool/'+s, {method:'DELETE'});
+      pool.value = pool.value.filter(p => p.source !== s);
+      showToast('已删除', 'success');
+    };
+
+    const openEditToken = (source) => {
+      editTokenSource.value = source;
+      editTokenValue.value = '';
+      showTokenModal.value = true;
+    };
+
+    const submitToken = async () => {
+      if (!editTokenValue.value.trim()) { showToast('Token 不能为空', 'error'); return; }
+      const fd = new FormData();
+      fd.append('source', editTokenSource.value);
+      fd.append('token', editTokenValue.value);
+      await fetch('/api/pool/update_token', {method:'POST', body:fd});
+      showToast('更新成功', 'success');
+      showTokenModal.value = false;
+    };
+
+    const doFetch = async () => {
+      fetching.value = true;
+      const fd = new FormData();
+      fd.append('source', fetchSource.value);
+      if (fetchToken.value) fd.append('api_key', fetchToken.value);
+      try {
+        const res = await fetch('/api/models/fetch', {method:'POST', body:fd});
+        const d = await res.json();
+        showToast(d.msg, d.status === 'success' ? 'success' : 'error');
+        if (d.status === 'success') setTimeout(() => location.reload(), 800);
+      } catch(e) { showToast('网络错误', 'error'); }
+      fetching.value = false;
+    };
+
+    const addModel = async () => {
+      if (!newMName.value.trim()) { showToast('请输入模型 ID', 'error'); return; }
+      const fd = new FormData();
+      fd.append('name', newMName.value);
+      fd.append('source', newMSource.value);
+      await fetch('/api/models', {method:'POST', body:fd});
+      showToast('添加成功', 'success');
+      newMName.value = '';
+      setTimeout(() => location.reload(), 500);
+    };
+
+    const toggleModelSelect = (id) => {
+      const idx = selectedModels.value.indexOf(id);
+      if (idx === -1) selectedModels.value.push(id);
+      else selectedModels.value.splice(idx, 1);
+    };
+
+    const doBatchDelete = async () => {
+      if (!confirm('确认删除 ' + selectedModels.value.length + ' 个模型？')) return;
+      for (const id of selectedModels.value) await fetch('/api/models/'+id, {method:'DELETE'});
+      showToast('已批量删除 ' + selectedModels.value.length + ' 个模型', 'success');
+      selectedModels.value = [];
+      setTimeout(() => location.reload(), 500);
+    };
+
+    const openKeyModal = (k = null) => {
+      if (k) {
+        isEdit.value = true;
+        const isAllowAll = !k.allowed_models || k.allowed_models === '';
+        keyForm.value = { key: k.key, name: k.name, allowAll: isAllowAll, selectedModels: isAllowAll ? [] : k.allowed_models.split(',').map(s => s.trim()) };
+      } else {
+        isEdit.value = false;
+        keyForm.value = { key: '', name: '', allowAll: true, selectedModels: [] };
+      }
+      showKeyModal.value = true;
+    };
+
+    const submitKey = async () => {
+      if (!keyForm.value.name.trim()) { showToast('备注必填', 'error'); return; }
+      let modelStr = "";
+      if (!keyForm.value.allowAll) {
+        if (keyForm.value.selectedModels.length === 0) { showToast('请选择模型', 'error'); return; }
+        modelStr = keyForm.value.selectedModels.join(',');
+      }
+      const headers = { 'Content-Type': 'application/json' };
+      if (isEdit.value) await fetch('/api/keys/' + keyForm.value.key, { method: 'PUT', headers, body: JSON.stringify({ name: keyForm.value.name, models: modelStr }) });
+      else {
+        const fd = new FormData();
+        fd.append('name', keyForm.value.name);
+        fd.append('models', modelStr);
+        await fetch('/api/keys', { method: 'POST', body: fd });
+      }
+      showToast(isEdit.value ? '已更新' : '已创建', 'success');
+      showKeyModal.value = false;
+      setTimeout(() => location.reload(), 500);
+    };
+
+    const delKey = async (k) => {
+      if (!confirm('确认删除？')) return;
+      await fetch('/api/keys/'+k, {method:'DELETE'});
+      keys.value = keys.value.filter(key => key.key !== k);
+      showToast('已删除', 'success');
+    };
+
+    const copyKey = (k) => {
+      navigator.clipboard.writeText(k).then(() => showToast('已复制', 'success'));
+    };
+
+    const maskKey = (k) => k.length < 16 ? k : k.substring(0, 8) + '••••••••' + k.substring(k.length - 6);
+
+    const logout = () => {
+      document.cookie = 'admin_token=;path=/';
+      location.reload();
+    };
+
+    const runTest = async () => {
+      if (!testKey.value || !testMessages.value) { showToast('请填写 Key 和消息', 'error'); return; }
+      testing.value = true;
+      testResult.value = null;
+      try {
+        let msgs;
+        try { msgs = JSON.parse(testMessages.value); }
+        catch { showToast('JSON 格式错误', 'error'); testing.value = false; return; }
+        const res = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + testKey.value },
+          body: JSON.stringify({ model: testModel.value, messages: msgs, stream: false })
+        });
+        const d = await res.json();
+        if (d.error) testResult.value = { error: JSON.stringify(d.error, null, 2) };
+        else testResult.value = { response: JSON.stringify(d, null, 2) };
+        requestHistory.value.unshift({ model: testModel.value, time: new Date(), success: !d.error, data: d });
+        if (requestHistory.value.length > 50) requestHistory.value.pop();
+      } catch(e) { testResult.value = { error: e.message }; }
+      testing.value = false;
+    };
+
+    const loadRequest = (req) => {
+      testModel.value = req.model;
+      testMessages.value = JSON.stringify(req.data?.messages || []);
+    };
+
+    const exportHistory = () => {
+      const blob = new Blob([JSON.stringify(requestHistory.value, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'request-history.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const importHistory = () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          try {
+            const data = JSON.parse(e.target.result);
+            requestHistory.value = data;
+            showToast('导入成功', 'success');
+          } catch { showToast('JSON 格式错误', 'error'); }
+        };
+        reader.readAsText(file);
+      };
+      input.click();
+    };
+
+    const refreshOAuth = (id) => { showToast('刷新中...', 'info'); };
+    const unbindOAuth = (id) => { if (confirm('确认解绑？')) showToast('已解绑', 'success'); };
+
+    onMounted(async () => {
+      if (localStorage.getItem('darkMode') === '1' || (!localStorage.getItem('darkMode') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        isDark.value = true;
+        document.documentElement.classList.add('dark');
+      }
+      try {
+        const res = await fetch('/health');
+        if (res.ok) healthStatus.value = 'healthy';
+      } catch(e) { healthStatus.value = 'unhealthy'; }
+      lastRefresh.value = new Date();
+
+      // Load initial data
+      try {
+        const [poolRes, modelsRes, keysRes] = await Promise.all([
+          fetch('/api/pool').then(r => r.json()),
+          fetch('/api/models').then(r => r.json()),
+          fetch('/api/keys').then(r => r.json())
+        ]);
+        if (poolRes.status === 'success') pool.value = poolRes.data || [];
+        if (modelsRes.status === 'success') models.value = modelsRes.data || [];
+        if (keysRes.status === 'success') keys.value = keysRes.data || [];
+      } catch(e) { console.error('Failed to load data', e); }
+
+      // Mock fallback chains
+      fallbackChains.value = [
+        { model: 'gpt-4', providers: [{source:'openai',model:'gpt-4'},{source:'azure',model:'gpt-4'},{source:'deepseek',model:'deepseek-chat'}] },
+        { model: 'claude-3', providers: [{source:'claude',model:'claude-3-sonnet'},{source:'anthropic',model:'claude-3-haiku'}] }
+      ];
+
+      // Mock daily trend
+      dailyTrend.value = [
+        { label: 'Mon', value: 45 }, { label: 'Tue', value: 52 }, { label: 'Wed', value: 38 },
+        { label: 'Thu', value: 65 }, { label: 'Fri', value: 58 }, { label: 'Sat', value: 42 }, { label: 'Sun', value: 35 }
+      ];
+
+      // Mock notifications
+      notifications.value = [
+        { id: 1, title: '系统通知', message: '代理池检测完成', time: new Date(), icon: '✅', read: false },
+        { id: 2, title: '用量警告', message: 'OpenAI 用量已达 80%', time: new Date(Date.now() - 3600000), icon: '⚠️', read: false }
+      ];
+
+      // Mock request logs
+      requestLogs.value = [
+        { status: 200, method: 'POST', path: '/v1/chat/completions', model: 'gpt-4', time: new Date() },
+        { status: 200, method: 'POST', path: '/v1/chat/completions', model: 'claude-3', time: new Date(Date.now() - 5000) },
+        { status: 429, method: 'POST', path: '/v1/chat/completions', model: 'gpt-4', time: new Date(Date.now() - 10000) }
+      ];
+    });
+
+    return {
+      pool, models, keys, sources, showFetchModal, fetchSource, fetchToken, fetching, showManualModelModal, newMName, newMSource, showKeyModal, isEdit, keyForm, testing, showTokenModal, editTokenSource, editTokenValue, healthStatus, rateLimit, lastRefresh, isDark, modelSearch, selectedModels, currentTab, oauthAccounts, openaiUsage, loadingUsage, testModel, testKey, testMessages, testResult, showLogDrawer, requestLogs, requestHistory, showNotifications, notifications, fallbackChains, dailyTrend, filteredModels, activePoolCount, sourceColor, getHealthColor, getHealthColorClass, toggleDark, formatTime, showToast, markRead, markAllRead, fetchOpenAIUsage, testPool, delPool, openEditToken, submitToken, doFetch, addModel, toggleModelSelect, doBatchDelete, openKeyModal, submitKey, delKey, copyKey, maskKey, logout, runTest, loadRequest, exportHistory, importHistory, refreshOAuth, unbindOAuth
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

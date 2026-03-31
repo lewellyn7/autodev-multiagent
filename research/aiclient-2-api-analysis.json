@@ -1,0 +1,55 @@
+{
+  "借鉴点": [
+    {
+      "功能名": "Provider 池管理算法",
+      "实现方式": "基于评分的多维度节点选择策略，综合考虑健康状态、并发限制、使用次数、最后使用时间、序列号轮询、队列负载等因素，通过统一评分公式计算节点优先级。支持缓冲队列机制（Buffer Queue）延迟刷新去重、并发控制（全局+每提供商两级）、自动预热、健康检查、错误恢复、使用量统计等功能。",
+      "可移植性": "高"
+    },
+    {
+      "功能名": "OAuth 认证管理",
+      "实现方式": "统一 OAuth 认证框架，支持多种认证方式（Social Auth/Google/GitHub、Builder ID Device Code Flow），使用 PKCE 代码验证器增强安全性，本地回调服务器处理 OAuth 回调，支持 Token 自动刷新、批量导入、凭据文件管理、Web UI 可视化配置等功能。",
+      "可移植性": "高"
+    },
+    {
+      "功能名": "协议转换器工厂",
+      "实现方式": "基于策略模式和工厂模式实现协议转换器，定义 BaseConverter 抽象基类，规范 convertRequest/convertResponse/convertStreamChunk/convertModelList 等接口，支持转换器实例缓存、动态注册、协议前缀匹配等功能，实现 OpenAI/Claude/Gemini 三协议互转。",
+      "可移植性": "高"
+    },
+    {
+      "功能名": "Web UI 管理控制台",
+      "实现方式": "基于 Express 的 Web 管理界面，提供 Dashboard（系统概览）、Configuration（实时配置）、Provider Pools（节点管理）、Config Files（凭据管理）、Real-time Logs（日志查看）等功能模块，支持主题切换、WebSocket 实时事件推送、RESTful API 配置管理。",
+      "可移植性": "中"
+    },
+    {
+      "功能名": "认证文件管理",
+      "实现方式": "统一凭据存储路径规范（~/.gemini/, ~/.kiro/, ~/.qwen/ 等），支持 OAuth 凭证文件自动保存、批量导入、重复检测、自动关联到 Provider 池、凭证刷新过期检测、Web UI 可视化上传/删除等功能。",
+      "可移植性": "中"
+    },
+    {
+      "功能名": "健康检查与故障转移",
+      "实现方式": "定期健康检查机制（默认 10 分钟），支持自定义健康检查模型、错误计数阈值、不健康标记、自动恢复时间、Provider Fallback Chain（同协议回退）、Model Fallback Mapping（跨协议模型映射）、Webhook 告警通知等功能。",
+      "可移植性": "高"
+    },
+    {
+      "功能名": "并发控制与队列管理",
+      "实现方式": "节点级并发限制（concurrencyLimit）+ 队列等待（queueLimit）机制，支持请求排队、超时释放、信号通知、活跃计数、等待计数、队列处理器等功能，避免单节点过载。",
+      "可移植性": "高"
+    },
+    {
+      "功能名": "TLS Sidecar 代理",
+      "实现方式": "集成 Go uTLS 库实现 TLS 指纹模拟，绕过 Cloudflare 等服务的 JA3/JA4 检测，支持自动 HTTP/2 协商、Chrome 指纹模拟、Sidecar 进程管理等功能，解决 Grok 等服务的 403 禁止访问问题。",
+      "可移植性": "中"
+    },
+    {
+      "功能名": "日志与审计系统",
+      "实现方式": "全链路日志记录，支持请求/响应数据捕获、日志级别控制（debug/info/warn/error）、实时日志推送、日志文件轮转、私有数据集构建、审计追踪等功能。",
+      "可移植性": "高"
+    },
+    {
+      "功能名": "多模型统一管理",
+      "实现方式": "PROVIDER_MODELS 配置映射，定义各 Provider 支持的模型列表，支持模型过滤（notSupportedModels）、模型回退映射（modelFallbackMapping）、协议兼容性检查等功能，实现多模型统一接口。",
+      "可移植性": "高"
+    }
+  ],
+  "具体代码片段": "// Provider 池管理核心评分算法\n_calculateNodeScore(providerStatus, now = Date.now(), minSeqInPool = -1) {\n  const config = providerStatus.config;\n  const state = providerStatus.state;\n  \n  // 1. 基础健康分：不健康的排最后\n  if (!config.isHealthy || config.isDisabled) return 1e18;\n  \n  // 2. 并发限制检查\n  const concurrencyLimit = parseInt(config.concurrencyLimit || 0);\n  const queueLimit = parseInt(config.queueLimit || 0);\n  \n  if (concurrencyLimit > 0) {\n    if (state.activeCount >= concurrencyLimit) {\n      if (queueLimit > 0 && state.waitingCount >= queueLimit) {\n        return 1e17; // 队列满，排在最后\n      }\n      return 1e15 + (state.waitingCount || 0) * 1e10; // 排队中\n    }\n  }\n  \n  // 3. 新鲜度判断（刚健康检查过的节点优先）\n  const lastHealthCheckTime = config.lastHealthCheckTime ? new Date(config.lastHealthCheckTime).getTime() : 0;\n  const isFresh = lastHealthCheckTime && (now - lastHealthCheckTime < 60000);\n\n  // 4. 统一评分公式\n  const lastUsedTime = config.lastUsed ? new Date(config.lastUsed).getTime() : (now - 86400000);\n  const baseScore = isFresh ? -1e14 : lastUsedTime; // 新鲜节点使用负偏移\n  const usageCount = config.usageCount || 0;\n  const usageScore = usageCount * 10000; // 使用次数惩罚\n  \n  const lastSelectionSeq = config._lastSelectionSeq || 0;\n  const relativeSeq = Math.max(0, lastSelectionSeq - minSeqInPool);\n  const cappedRelativeSeq = Math.min(relativeSeq, 100);\n  const sequenceScore = cappedRelativeSeq * 1000; // 序列号惩罚（轮询）\n  \n  const loadScore = (state.activeCount || 0) * 5000; // 负载惩罚\n  const freshBonus = isFresh ? (now - lastHealthCheckTime) : 0; // 新鲜节点微调\n\n  return baseScore + usageScore + sequenceScore + loadScore + freshBonus;\n}\n\n// OAuth PKCE 代码验证器生成\nfunction generateCodeVerifier() {\n  return crypto.randomBytes(32).toString('base64url');\n}\n\nfunction generateCodeChallenge(codeVerifier) {\n  const hash = crypto.createHash('sha256');\n  hash.update(codeVerifier);\n  return hash.digest('base64url');\n}\n\n// 协议转换器基类\nexport class BaseConverter {\n  constructor(protocolName) {\n    if (new.target === BaseConverter) {\n      throw new Error('BaseConverter 是抽象类，不能直接实例化');\n    }\n    this.protocolName = protocolName;\n  }\n\n  convertRequest(data, targetProtocol) {\n    throw new Error('convertRequest 方法必须被子类实现');\n  }\n\n  convertResponse(data, targetProtocol, model) {\n    throw new Error('convertResponse 方法必须被子类实现');\n  }\n\n  convertStreamChunk(chunk, targetProtocol, model) {\n    throw new Error('convertStreamChunk 方法必须被子类实现');\n  }\n\n  convertModelList(data, targetProtocol) {\n    throw new Error('convertModelList 方法必须被子类实现');\n  }\n}\n\n// 缓冲队列刷新机制（延迟去重）\n_enqueueRefresh(providerType, providerStatus, force = false) {\n  const uuid = providerStatus.uuid;\n  \n  if (this.refreshingUuids.has(uuid)) return;\n\n  // 健康节点数<5 时 bypass 缓冲直接刷新\n  const healthyCount = this.getHealthyCount(providerType);\n  if (healthyCount < 5) {\n    this._enqueueRefreshImmediate(providerType, providerStatus, force);\n    return;\n  }\n\n  // 初始化缓冲队列（使用 Map 自动去重）\n  if (!this.refreshBufferQueues[providerType]) {\n    this.refreshBufferQueues[providerType] = new Map();\n  }\n\n  const bufferQueue = this.refreshBufferQueues[providerType];\n  const existing = bufferQueue.get(uuid);\n  const isNewEntry = !existing;\n  \n  // 更新或添加节点（保留 force 标志）\n  bufferQueue.set(uuid, {\n    providerStatus,\n    force: existing ? (existing.force || force) : force\n  });\n  \n  // 重置定时器（延迟 5 秒处理）\n  if (isNewEntry || !this.refreshBufferTimers[providerType]) {\n    if (this.refreshBufferTimers[providerType]) {\n      clearTimeout(this.refreshBufferTimers[providerType]);\n    }\n    this.refreshBufferTimers[providerType] = setTimeout(() => {\n      this._flushRefreshBuffer(providerType);\n    }, this.bufferDelay);\n  }\n}\n\n// Fallback 链机制\nasync selectProviderWithFallback(providerType, requestedModel = null, options = {}) {\n  const triedTypes = new Set();\n  const typesToTry = [providerType];\n  \n  // 添加 Fallback Chain 中的类型\n  const fallbackTypes = this.fallbackChain[providerType] || [];\n  typesToTry.push(...fallbackTypes);\n\n  for (const currentType of typesToTry) {\n    if (triedTypes.has(currentType)) continue;\n    triedTypes.add(currentType);\n\n    // 协议兼容性检查\n    const primaryProtocol = getProtocolPrefix(providerType);\n    const fallbackProtocol = getProtocolPrefix(currentType);\n    if (primaryProtocol !== fallbackProtocol) continue;\n\n    // 模型支持检查\n    const supportedModels = getProviderModels(currentType);\n    if (supportedModels.length > 0 && !supportedModels.includes(requestedModel)) continue;\n\n    const selectedConfig = await this.selectProvider(currentType, requestedModel, options);\n    if (selectedConfig) {\n      return {\n        config: selectedConfig,\n        actualProviderType: currentType,\n        isFallback: currentType !== providerType\n      };\n    }\n  }\n  return null;\n}"
+}

@@ -1,0 +1,225 @@
+import os, json, secrets, time, uuid, httpx, asyncio
+from pathlib import Path
+from fastapi import FastAPI, Request, HTTPException, Depends, Form, Response, Body
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import app.database as db
+import g4f
+
+app = FastAPI()
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+db.init_db()
+templates = Jinja2Templates(directory="app/templates")
+
+ADMIN_USER = os.getenv("ADMIN_USER", "admin")
+ADMIN_PASS = os.getenv("ADMIN_PASSWORD", "password")
+SESSION_KEY = secrets.token_hex(16)
+
+# --- Helpers ---
+async def api_auth(request: Request):
+    token = request.cookies.get("admin_token")
+    if token != SESSION_KEY: raise HTTPException(401, "Unauthorized")
+
+async def verify_client_key(request: Request):
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "): raise HTTPException(401, "Missing Key")
+    key_info = db.get_key_info(auth.split(" ")[1])
+    if not key_info: raise HTTPException(401, "Invalid Key")
+    return key_info
+
+# --- Page Routes ---
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(r: Request): return templates.TemplateResponse("login.html", {"request": r})
+
+@app.post("/login")
+async def login_do(username: str=Form(...), password: str=Form(...)):
+    if username == ADMIN_USER and password == ADMIN_PASS:
+        resp = JSONResponse({"status": "success"})
+        resp.set_cookie("admin_token", SESSION_KEY, httponly=True)
+        return resp
+    return JSONResponse({"status": "error", "msg": "Invalid credentials"}, 401)
+
+@app.get("/")
+async def index(r: Request):
+    if r.cookies.get("admin_token") != SESSION_KEY: return RedirectResponse("/login", 302)
+    return templates.TemplateResponse("admin.html", {
+        "request": r,
+        "pool": db.get_all_pool_status(),
+        "models": db.get_models(),
+        "expired_models": db.get_expired_models(), # [新增] 注入过期模型数据
+        "keys": db.list_keys()
+    })
+
+# --- APIs: Pool & Keys ---
+class SyncData(BaseModel):
+    source: str
+    cookies: dict
+    tokens: dict
+
+@app.post("/api/pool/sync")
+async def sync_pool(data: SyncData):
+    db.update_pool(data.source, data.cookies, data.tokens)
+    return {"status": "success", "msg": f"Synced {data.source}"}
+
+@app.delete("/api/pool/{source}")
+async def delete_pool_item(source: str, _=Depends(api_auth)):
+    db.delete_pool_data(source)
+    return {"status": "success"}
+
+@app.post("/api/keys")
+async def add_key(name:str=Form(...), models:str=Form(""), _=Depends(api_auth)):
+    k = f"sk-{secrets.token_hex(16)}"
+    db.add_key(k, name, models); return {"status":"ok"}
+@app.put("/api/keys/{key}")
+async def upd_key(key:str, name:str=Body(...), models:str=Body(""), _=Depends(api_auth)):
+    db.update_key(key, name, models); return {"status":"ok"}
+@app.delete("/api/keys/{key}")
+async def del_key(key:str, _=Depends(api_auth)):
+    db.del_key(key); return {"status":"ok"}
+
+# --- APIs: Models Management ---
+
+# 添加模型 (手动)
+@app.post("/api/models")
+async def add_model(name:str=Form(...), source:str=Form(...), _=Depends(api_auth)):
+    db.add_model(name, source); return {"status":"ok"}
+
+# [修改] 删除模型：自动移入过期表
+@app.delete("/api/models/{id}")
+async def del_model(id:int, _=Depends(api_auth)):
+    model = db.get_model_by_id(id)
+    if model:
+        # 先加入黑名单
+        db.add_expired_model(model['name'], model['source'])
+        # 再从活跃表删除
+        db.del_model(id)
+    return {"status":"ok"}
+
+# [新增] 移除过期模型 (允许重新获取)
+@app.delete("/api/models/expired/{id}")
+async def del_expired_model(id:int, _=Depends(api_auth)):
+    db.del_expired_model(id)
+    return {"status":"ok"}
+
+# [修改] 自动获取模型：增加过期比对逻辑
+@app.post("/api/models/fetch")
+async def fetch_models_api(
+    source: str = Form(...), 
+    api_key: str = Form(None), 
+    _=Depends(api_auth)
+):
+    models_found = []
+    
+    # 1. 准备凭证
+    token = api_key
+    if not token:
+        pool = db.get_pool_data(source)
+        if pool and pool.get("tokens"):
+            t = pool["tokens"]
+            token = t.get("accessToken") or t.get("apiKey") or t.get("token") or t.get("key")
+    
+    # 2. 抓取逻辑
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            if source == "chatgpt":
+                if not token: raise Exception("缺 Token")
+                r = await client.get("https://chatgpt.com/backend-api/models", headers={"Authorization": f"Bearer {token}", "User-Agent":"Mozilla/5.0"})
+                if r.status_code == 200:
+                    for m in r.json().get("models", []): models_found.append((m["slug"], "chatgpt"))
+            
+            elif source == "deepseek":
+                if not token: 
+                    models_found = [("deepseek-chat", "deepseek"), ("deepseek-coder", "deepseek")] # Fallback
+                else:
+                    r = await client.get("https://api.deepseek.com/models", headers={"Authorization": f"Bearer {token}"})
+                    if r.status_code == 200:
+                        for m in r.json().get("data", []): models_found.append((m["id"], "deepseek"))
+
+            elif source == "moonshot":
+                if not token: raise Exception("缺 API Key")
+                r = await client.get("https://api.moonshot.cn/v1/models", headers={"Authorization": f"Bearer {token}"})
+                if r.status_code == 200:
+                    for m in r.json().get("data", []): models_found.append((m["id"], "moonshot"))
+
+            elif source == "openai":
+                if not token: raise Exception("缺 API Key")
+                r = await client.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {token}"})
+                if r.status_code == 200:
+                    for m in r.json().get("data", []): 
+                        if "gpt" in m["id"] or "o1" in m["id"]: models_found.append((m["id"], "openai"))
+            
+            elif source == "claude":
+                 # Claude 官方 API 获取模型较复杂，暂保留硬编码列表
+                 models_found = [("claude-3-opus-20240229", "claude"), ("claude-3-5-sonnet-20240620", "claude")]
+
+            elif source == "gemini":
+                 models_found = [("gemini-1.5-pro", "gemini"), ("gemini-1.5-flash", "gemini")]
+
+    except Exception as e:
+        return JSONResponse({"status": "error", "msg": str(e)}, 400)
+
+    # 3. [核心] 过滤过期模型
+    if models_found:
+        expired_set = db.get_all_expired_set() # {(name, source), ...}
+        
+        valid_models = []
+        filtered_count = 0
+        
+        for m_name, m_source in models_found:
+            if (m_name, m_source) in expired_set:
+                filtered_count += 1
+            else:
+                valid_models.append((m_name, m_source))
+        
+        if valid_models:
+            db.bulk_add_models(valid_models)
+            msg = f"更新 {len(valid_models)} 个模型"
+            if filtered_count > 0: msg += f" (过滤了 {filtered_count} 个过期模型)"
+            return {"status": "success", "msg": msg}
+        else:
+            return {"status": "error", "msg": f"找到的模型全部在过期列表中 ({filtered_count} 个)"}
+    else:
+        return {"status": "error", "msg": "未找到模型"}
+
+# --- Chat Completion (Keep same) ---
+class ChatMsg(BaseModel):
+    role: str
+    content: str
+class ChatReq(BaseModel):
+    model: str
+    messages: list[ChatMsg]
+    stream: bool = False
+
+@app.post("/v1/chat/completions")
+async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_key)):
+    allowed = key_info['allowed_models']
+    if allowed:
+        allow_list = [x.strip() for x in allowed.split(',') if x.strip()]
+        if req.model not in allow_list: return JSONResponse({"error": f"Model {req.model} not allowed"}, 403)
+
+    g4f_kwargs = {}
+    source_map = { "gpt": "chatgpt", "o1-": "chatgpt", "claude": "claude", "gemini": "gemini", "deepseek": "deepseek", "moonshot": "moonshot" }
+    target_source = "g4f-free"
+    for k, v in source_map.items():
+        if k in req.model: target_source = v; break
+    
+    pool = db.get_pool_data(target_source)
+    if pool:
+        if pool.get("cookies"): g4f_kwargs["cookies"] = pool["cookies"]
+        if pool.get("tokens") and pool["tokens"].get("accessToken"): g4f_kwargs["access_token"] = pool["tokens"]["accessToken"]
+
+    try:
+        response = g4f.ChatCompletion.create(model=req.model, messages=[{"role": m.role, "content": m.content} for m in req.messages], stream=req.stream, **g4f_kwargs)
+    except Exception as e: return JSONResponse({"error": f"G4F Error: {str(e)}"}, 500)
+
+    if req.stream:
+        def stream_gen():
+            for chunk in response:
+                if chunk: yield f"data: {json.dumps({'id':'chatcmpl-gen','object':'chat.completion.chunk','created':int(time.time()),'model':req.model,'choices':[{'index':0,'delta':{'content':chunk},'finish_reason':None}]})}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(stream_gen(), media_type="text/event-stream")
+    else:
+        return {"id": f"chatcmpl-{uuid.uuid4()}","object": "chat.completion","created": int(time.time()),"model": req.model,"choices": [{"index": 0, "message": {"role": "assistant", "content": response}, "finish_reason": "stop"}]}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "humanizer": {
+      "version": "1.0.0",
+      "installedAt": 1774487035182
+    },
+    "RAGFlow": {
+      "version": "1.0.2",
+      "installedAt": 1774512481592
+    },
+    "proactive-agent": {
+      "version": "3.1.0",
+      "installedAt": 1774835768341
+    }
+  }
+}

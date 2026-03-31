@@ -1,0 +1,98 @@
+# =============================================================================
+# AI Gateway - Docker Compose
+# =============================================================================
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-gateway-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_gateway}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ai-gateway-net
+
+  # ---------------------------------------------------------------------------
+  # AI Gateway Application
+  # ---------------------------------------------------------------------------
+  ai-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-gateway
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${PORT:-28000}:8000"
+    environment:
+      # Database
+      DB_TYPE: ${DB_TYPE:-postgres}
+      DB_FILE: /app/data/gateway.db
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-ai_gateway}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      # Admin
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-in-production}
+      SESSION_KEY: ${SESSION_KEY:-}
+      # Security
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+      # OAuth
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      # Debug
+      DEBUG: ${DEBUG:-false}
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ai-gateway-net
+
+  # ---------------------------------------------------------------------------
+  # Optional: Redis for caching/rate limiting
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ai-gateway-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ai-gateway-net
+    profiles:
+      - with-redis
+
+networks:
+  ai-gateway-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
