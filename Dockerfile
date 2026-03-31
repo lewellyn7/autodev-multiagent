@@ -19,6 +19,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 COPY requirements.txt .
 
 # Pre-install dependencies (creates wheel cache)
+# Let pip resolve starlette version automatically
 RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
 
 # =============================================================================
@@ -30,35 +31,16 @@ RUN groupadd --gid 1000 appgroup && useradd --uid 1000 --gid 1000 --shell /bin/b
 
 WORKDIR /app
 
-# Install runtime dependencies only
+# Install runtime dependencies only (minimal)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    libglib2.0-0 \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libdbus-1-3 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy pre-built wheels from builder
 COPY --from=builder /app/wheels /wheels
-RUN pip install --no-cache-dir --find-links=/wheels /wheels/*.whl
-
-# Install playwright chromium (if needed)
-RUN pip install --no-cache-dir playwright \
-    && playwright install --with-deps chromium \
-    && playwright install-deps chromium \
-    || true
+# Install with no-deps first to avoid conflicts, then install remaining deps
+RUN pip install --no-cache-dir --no-deps /wheels/*.whl || true \
+    && pip install --no-cache-dir --find-links=/wheels /wheels/*.whl
 
 # Copy application
 COPY --chown=appuser:appgroup app/ ./app/
@@ -76,7 +58,7 @@ ENV PYTHONUNBUFFERED=1 \
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run with uvicorn

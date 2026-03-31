@@ -1,0 +1,9 @@
+# Development requirements - includes testing tools
+-r requirements.txt
+
+# Testing
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+
+# Browser automation (optional, for development only)
+playwright>=1.40.0
