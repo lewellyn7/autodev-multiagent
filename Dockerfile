@@ -1,11 +1,38 @@
-FROM python:3.11-slim
+# =============================================================================
+# AI Gateway - Multi-stage Dockerfile
+# =============================================================================
+# Stage 1: Builder
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python build tool
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+
+# Pre-install dependencies (creates wheel cache)
+RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
+
+# =============================================================================
+# Stage 2: Runtime
+FROM python:3.11-slim AS runtime
+
+# Security: Run as non-root user
+RUN groupadd --gid 1000 appgroup && useradd --uid 1000 --gid 1000 --shell /bin/bash appuser
+
+WORKDIR /app
+
+# Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    build-essential \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -23,22 +50,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy pre-built wheels from builder
+COPY --from=builder /app/wheels /wheels
+RUN pip install --no-cache-dir --find-links=/wheels /wheels/*.whl
 
-# Install Playwright
-RUN pip install --no-cache-dir playwright && playwright install chromium
+# Install playwright chromium (if needed)
+RUN pip install --no-cache-dir playwright \
+    && playwright install --with-deps chromium \
+    && playwright install-deps chromium \
+    || true
 
 # Copy application
-COPY app/ ./app/
+COPY --chown=appuser:appgroup app/ ./app/
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+# Create data directory
+RUN mkdir -p /app/data && chown appuser:appgroup /app/data
+
+# Switch to non-root user
+USER appuser
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app
 
 EXPOSE 8000
 
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Fix starlette version for Jinja2 compatibility
-RUN pip install --no-cache-dir starlette==0.45.0
+# Run with uvicorn
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

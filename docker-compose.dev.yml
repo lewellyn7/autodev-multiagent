@@ -1,0 +1,45 @@
+# =============================================================================
+# AI Gateway - Docker Compose (SQLite for development)
+# =============================================================================
+services:
+  # ---------------------------------------------------------------------------
+  # AI Gateway Application (SQLite - for development)
+  # ---------------------------------------------------------------------------
+  ai-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-gateway
+    restart: on-failure
+    ports:
+      - "${PORT:-28000}:8000"
+    environment:
+      # Database - SQLite for dev
+      DB_TYPE: sqlite
+      DB_FILE: /app/data/gateway.db
+      # Admin
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      # Security
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-$(openssl rand -hex 32)}
+      SECRET_KEY: ${SECRET_KEY:-$(openssl rand -hex 32)}
+      # Debug
+      DEBUG: ${DEBUG:-true}
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - ai-gateway-net
+
+networks:
+  ai-gateway-net:
+    driver: bridge
+
+volumes:
+  data:

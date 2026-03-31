@@ -7,7 +7,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import app.database as db
-import g4f
+import litellm
 
 from curl_cffi.requests import AsyncSession
 from app.middleware import RateLimitMiddleware
@@ -887,56 +887,49 @@ async def list_models(request: Request):
 
 @app.post("/v1/chat/completions", tags=["openai"])
 async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_key)):
+    """OpenAI-compatible chat completions endpoint using LiteLLM"""
     allowed = key_info["allowed_models"]
     if allowed:
         if req.model not in [x.strip() for x in allowed.split(",") if x.strip()]:
             return JSONResponse({"error": "Model not allowed"}, 403)
 
-    g4f_kwargs = {}
+    # Map model to provider and get API key
     source_map = {
-        "gpt": "chatgpt",
-        "o1-": "chatgpt",
-        "claude": "claude",
-        "gemini": "gemini",
-        "deepseek": "deepseek",
-        "moonshot": "moonshot",
-        "qwen": "qwen",
+        "gpt": "chatgpt", "o1-": "chatgpt",
+        "claude": "claude", "gemini": "gemini",
+        "deepseek": "deepseek", "moonshot": "moonshot", "qwen": "qwen",
     }
-    target_source = "g4f-free"
+    target_source = "chatgpt"
     for k, v in source_map.items():
         if k in req.model:
             target_source = v
             break
 
     pool = db.get_pool_data(target_source)
+    api_key = None
     if pool:
-        if pool.get("cookies"):
-            g4f_kwargs["cookies"] = pool["cookies"]
-        if target_source in ["deepseek", "moonshot", "openai"]:
-            t = pool.get("tokens", {})
-            k = t.get("apiKey") or t.get("key") or t.get("token")
-            if k:
-                g4f_kwargs["api_key"] = k
-        elif pool.get("tokens") and pool["tokens"].get("accessToken"):
-            g4f_kwargs["access_token"] = pool["tokens"]["accessToken"]
+        t = pool.get("tokens", {})
+        api_key = t.get("apiKey") or t.get("key") or t.get("token")
 
     try:
-        response = g4f.ChatCompletion.create(
+        response = await litellm.acompletion(
             model=req.model,
             messages=[{"role": m.role, "content": m.content} for m in req.messages],
             stream=req.stream,
-            **g4f_kwargs,
+            timeout=60,
+            api_key=api_key,
         )
     except Exception as e:
-        logger.error(f"G4F error for model {req.model}: {e}")
-        return JSONResponse({"error": f"G4F Error: {str(e)}"}, 500)
+        logger.error(f"LiteLLM error for model {req.model}: {e}")
+        return JSONResponse({"error": f"LiteLLM Error: {str(e)}"}, 500)
 
     if req.stream:
         async def stream_gen():
             try:
-                for chunk in response:
-                    if chunk:
-                        yield f"data: {json.dumps({'id':'chatcmpl-gen','object':'chat.completion.chunk','created':int(time.time()),'model':req.model,'choices':[{'index':0,'delta':{'content':chunk},'finish_reason':None}]})}\n\n"
+                async for chunk in response:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        yield f"data: {json.dumps({'id': chunk.id, 'object': 'chat.completion.chunk', 'created': int(time.time()), 'model': req.model, 'choices': [{'index': 0, 'delta': {'content': content}, 'finish_reason': None}]})}\n\n"
                 yield "data: [DONE]\n\n"
             except Exception as e:
                 logger.error(f"Stream error: {e}")
@@ -945,20 +938,16 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
         return StreamingResponse(stream_gen(), media_type="text/event-stream")
     else:
         return {
-            "id": f"chatcmpl-{uuid.uuid4()}",
+            "id": response.id,
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": req.model,
+            "model": response.model,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": response},
-                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": response.choices[0].message.content},
+                "finish_reason": response.choices[0].finish_reason,
             }],
         }
-
-# =============================================================================
-# Audit Log API Endpoints
-# =============================================================================
 
 @app.get("/api/audit/logs", tags=["audit"])
 async def get_audit_logs(
