@@ -330,7 +330,7 @@ GitHub Actions 自动流水线：
 ## 相关项目
 
 - [LiteLLM](https://github.com/BerriAI/litellm) - 统一 LLM 调用
-- [g4f](https://github.com/xtekky/gpt4free) - Free GPT API
+- [gpt4free](https://github.com/xtekky/gpt4free) - Reference only
 
 ## License
 

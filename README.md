@@ -289,7 +289,7 @@ ai-gateway/
 ### Image Size Comparison
 | Version | Size |
 |---------|------|
-| Original (with g4f) | ~2.4GB |
+| Original (single-stage) | ~2.4GB |
 | Optimized (LiteLLM) | ~400MB |
 
 ## CI/CD
