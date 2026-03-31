@@ -26,8 +26,8 @@
 │                     AI Gateway                          │
 ├─────────────────────────────────────────────────────────┤
 │  Admin UI (Vue 3 + Tailwind CSS)                       │
-│  ├── Dashboard (stats, health, usage)                   │
-│  ├── Proxy Pool (multi-account management)              │
+│  ├── Dashboard (stats, health, usage)                  │
+│  ├── Proxy Pool (multi-account management)             │
 │  ├── OAuth Accounts                                    │
 │  ├── Model Library                                     │
 │  ├── API Keys                                          │
@@ -35,10 +35,11 @@
 ├─────────────────────────────────────────────────────────┤
 │  API Layer (FastAPI)                                   │
 │  ├── /v1/chat/completions (OpenAI compatible)          │
+│  ├── /v1/models (OpenAI compatible)                   │
 │  ├── /api/pool/* (proxy management)                   │
 │  ├── /api/oauth/* (OAuth accounts)                    │
 │  ├── /api/audit/* (audit logs)                        │
-│  └── /api/models/* (model management)                 │
+│  └── /api/models/* (model management)                  │
 ├─────────────────────────────────────────────────────────┤
 │  Polling Engine                                        │
 │  ├── Round Robin | Random | Weighted                   │
@@ -46,8 +47,8 @@
 │  └── Fallback Chains (Model + Provider)               │
 ├─────────────────────────────────────────────────────────┤
 │  Backend                                               │
-│  ├── g4f (free ChatGPT)                               │
-│  ├── Cookie/Token pools                               │
+│  ├── LiteLLM (100+ LLM providers)                    │
+│  ├── Provider Wrappers (chatgpt, deepseek, etc.)    │
 │  ├── OAuth authentication                             │
 │  └── PostgreSQL / SQLite                              │
 └─────────────────────────────────────────────────────────┘
@@ -66,13 +67,13 @@
 git clone https://github.com/lewellyn7/autodev-multiagent.git
 cd autodev-multiagent
 
-# Build and run
-docker build -t aigateway:latest .
-docker run -d -p 28000:8000 \
-  -e ADMIN_USER=admin \
-  -e ADMIN_PASSWORD=your_secure_password \
-  --name aigateway \
-  aigateway:latest
+# Development (SQLite)
+docker-compose -f docker-compose.dev.yml up -d --build
+
+# Production (PostgreSQL)
+cp .env.docker .env
+# Edit .env with your credentials
+docker-compose -f docker-compose.prod.yml up -d --build
 ```
 
 ### Environment Variables
@@ -81,39 +82,17 @@ docker run -d -p 28000:8000 \
 |----------|---------|-------------|
 | `ADMIN_USER` | `admin` | Admin username |
 | `ADMIN_PASSWORD` | `password` | Admin password |
+| `DB_TYPE` | `postgres` | Database type (postgres/sqlite) |
+| `DB_FILE` | `data/gateway.db` | SQLite database file |
+| `POSTGRES_HOST` | `postgres` | PostgreSQL host |
+| `POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_DB` | `ai_gateway` | PostgreSQL database |
+| `POSTGRES_USER` | `postgres` | PostgreSQL user |
+| `POSTGRES_PASSWORD` | - | PostgreSQL password |
 | `GITHUB_CLIENT_ID` | - | GitHub OAuth App client ID |
 | `GITHUB_CLIENT_SECRET` | - | GitHub OAuth App secret |
-| `GITHUB_REDIRECT_URI` | `http://localhost:8000/oauth/github/callback` | OAuth callback URL |
-| `DB_TYPE` | `postgres` | Database type (postgres/sqlite) |
-| `DATABASE_URL` | - | PostgreSQL connection string |
-
-### Docker Compose
-
-```yaml
-version: '3'
-services:
-  gateway:
-    build: .
-    ports:
-      - "28000:8000"
-    environment:
-      - ADMIN_USER=admin
-      - ADMIN_PASSWORD=your_secure_password
-      - DB_TYPE=postgres
-      - DATABASE_URL=postgresql://user:pass@postgres:5432/gateway
-    depends_on:
-      - postgres
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_DB=gateway
-      - POSTGRES_USER=user
-      - POSTGRES_PASSWORD=pass
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-volumes:
-  pgdata:
-```
+| `ENCRYPTION_KEY` | - | 32-byte encryption key |
+| `SECRET_KEY` | - | Session secret key |
 
 ## API Reference
 
@@ -121,6 +100,7 @@ volumes:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
+| `GET /login` | GET | Login page |
 | `POST /login` | POST | Admin login |
 | `POST /logout` | POST | Logout |
 
@@ -145,11 +125,18 @@ curl -X POST http://localhost:28000/v1/chat/completions \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `GET /api/pool/{source}` | GET | Get pool data |
 | `POST /api/pool/sync` | POST | Chrome extension sync |
+| `DELETE /api/pool/{source}` | DELETE | Delete pool |
+| `POST /api/pool/update_token` | POST | Update token |
 | `POST /api/pool/test` | POST | Test proxy availability |
+| `GET /api/pool/openai/subscription` | GET | Get OpenAI subscription info |
+| `GET /api/pool/{source}/stats` | GET | Pool statistics |
 | `GET /api/pool/{source}/account` | GET | Get next account (with strategy) |
-| `POST /api/pool/{source}/account/{id}/report` | POST | Report usage result |
+| `POST /api/pool/{source}/account/add` | POST | Add account |
+| `DELETE /api/pool/{source}/account/{account_id}` | DELETE | Delete account |
+| `POST /api/pool/{source}/account/{account_id}/report` | POST | Report usage result |
+| `POST /api/pool/{source}/account/{account_id}/concurrent` | POST | Report concurrent usage |
+| `PUT /api/pool/{source}/account/{account_id}/config` | PUT | Update account config |
 | `GET /api/pool/{source}/health` | GET | Pool health status |
 | `GET /api/pool/{source}/score` | GET | Account health score |
 | `GET /api/pool/{source}/best` | GET | Get best account |
@@ -157,19 +144,12 @@ curl -X POST http://localhost:28000/v1/chat/completions \
 **Query Parameters for `/api/pool/{source}/account`:**
 - `strategy` - `round_robin` | `random` | `weighted` | `circuit_breaker`
 
-### OpenAI Subscription
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `GET /api/pool/openai/subscription` | GET | Get OpenAI subscription info |
-
 ### Audit Logs
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `GET /api/audit/logs` | GET | Get audit logs (paginated) |
 | `GET /api/audit/stats` | GET | Get audit statistics |
-| `POST /api/audit/cleanup` | POST | Cleanup old logs |
 
 ### OAuth
 
@@ -184,9 +164,10 @@ curl -X POST http://localhost:28000/v1/chat/completions \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `GET /api/models` | GET | List models |
+| `GET /api/models` | GET | List models (implicit, via /v1/models) |
 | `POST /api/models` | POST | Add model |
 | `DELETE /api/models/{id}` | DELETE | Delete model |
+| `DELETE /api/models/expired/{id}` | DELETE | Delete expired model |
 | `POST /api/models/fetch` | POST | Auto-fetch models |
 
 ### API Keys
@@ -255,37 +236,61 @@ Access `http://localhost:28000/` to manage:
 - 🔑 **API Keys** - Key management, permission config
 - ⚡ **API Test** - Online request debugging
 
-## Chrome Extension Sync
-
-1. Load `extension/` directory as Chrome extension
-2. Login to target websites (ChatGPT / Claude / etc.)
-3. Cookies automatically sync to gateway
-
 ## Project Structure
 
 ```
 ai-gateway/
 ├── app/
-│   ├── main.py           # FastAPI application
-│   ├── database.py       # Database operations
-│   ├── middleware.py     # Rate limiting middleware
+│   ├── main.py              # FastAPI application
+│   ├── main.py.bak/backup   # Backup versions
+│   ├── database.py          # Database operations
+│   ├── database_async.py    # Async database layer (aiosqlite + asyncpg)
+│   ├── config.py             # Configuration management (pydantic-settings)
+│   ├── middleware.py         # Rate limiting middleware
+│   ├── router.py            # Smart routing engine
+│   ├── providers/            # Provider wrappers
+│   │   ├── __init__.py
+│   │   ├── chatgpt.py       # OpenAI ChatGPT
+│   │   ├── deepseek.py      # DeepSeek
+│   │   ├── moonshot.py      # Moonshot
+│   │   ├── claude.py        # Anthropic Claude
+│   │   ├── gemini.py        # Google Gemini
+│   │   └── qwen.py          # Alibaba Qwen
+│   ├── routes/               # APIRouter modules
+│   │   ├── __init__.py
+│   │   └── chat.py          # Chat completions route
 │   └── templates/
-│       ├── admin.html    # Admin dashboard (Vue 3)
-│       └── login.html    # Login page
-├── extension/            # Chrome extension
-├── .github/workflows/    # CI/CD pipelines
-├── Dockerfile
-├── docker-compose.yml
+│       ├── admin.html       # Admin dashboard (Vue 3)
+│       └── login.html       # Login page
+├── Dockerfile               # Multi-stage Docker build
+├── docker-compose.yml       # Default compose
+├── docker-compose.dev.yml    # Development (SQLite)
+├── docker-compose.prod.yml  # Production (PostgreSQL)
+├── .env.example             # Environment variables template
+├── .env.docker              # Docker environment template
 └── requirements.txt
 ```
 
 ## Tech Stack
 
 - **Backend**: FastAPI + Uvicorn + Pydantic
-- **Database**: PostgreSQL / SQLite
+- **LLM Integration**: LiteLLM (OpenAI, Anthropic, Google, DeepSeek, etc.)
+- **Database**: PostgreSQL / SQLite (asyncpg + aiosqlite)
 - **Frontend**: Vue 3 + Tailwind CSS (CDN)
-- **Proxy**: g4f (Google, Get Free ChatGPT)
 - **Container**: Docker + Docker Compose
+
+## Docker Images
+
+### Multi-stage Build
+- **Builder stage**: Compiles dependencies and creates wheel cache
+- **Runtime stage**: Minimal Python runtime with pre-installed packages
+- **Non-root user**: Runs as `appuser` for security
+
+### Image Size Comparison
+| Version | Size |
+|---------|------|
+| Original (with g4f) | ~2.4GB |
+| Optimized (LiteLLM) | ~400MB |
 
 ## CI/CD
 
@@ -301,13 +306,14 @@ GitHub Actions workflows:
 | Health check latency | ~30ms |
 | Concurrent requests | 10 concurrent @ ~90ms |
 | Memory usage | ~61MB |
-| Image size | 378MB |
+| Image size | ~400MB |
 
 ## Related Projects
 
 Inspired by:
 - [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) - Go-based CLI proxy with OAuth
 - [AIClient-2-API](https://github.com/justlovemaki/AIClient-2-API) - Node.js multi-protocol gateway
+- [LiteLLM](https://github.com/BerriAI/litellm) - Unified LLM API layer
 
 ## License
 
