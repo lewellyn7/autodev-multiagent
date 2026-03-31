@@ -6,7 +6,8 @@ import json
 import time
 
 import litellm
-from fastapi import APIRouter, Depends, JSONResponse
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
