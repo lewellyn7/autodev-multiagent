@@ -30,7 +30,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ai-gateway
-    restart: unless-stopped
+    restart: on-failure
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,11 +38,11 @@ services:
       - "${PORT:-28000}:8000"
     environment:
       - DB_TYPE=postgres
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=ai_gateway
-      - DB_USER=postgres
-      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_NAME=ai_gateway
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - ADMIN_USER=${ADMIN_USER:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-change-me-in-production}
       - DEBUG=${DEBUG:-false}
