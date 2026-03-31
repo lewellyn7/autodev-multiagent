@@ -2,7 +2,6 @@
 ChatGPT Provider - OpenAI API 包装器
 """
 
-
 import httpx
 
 from . import BaseProvider, ProviderError, stream_response

@@ -1244,14 +1244,14 @@ def get_audit_stats(start_date=None, end_date=None):
     with get_conn() as conn:
         query = "SELECT COUNT(*) as total FROM audit_log WHERE 1=1"
         params = []
-        
+
         if start_date:
             query += " AND created_at >= ?"
             params.append(start_date)
         if end_date:
             query += " AND created_at <= ?"
             params.append(end_date)
-        
+
         if DB_TYPE == "postgres":
             cur = conn.cursor()
             cur.execute(query.replace("?", "%s"), params)
@@ -1259,7 +1259,7 @@ def get_audit_stats(start_date=None, end_date=None):
             cur.close()
         else:
             total = conn.execute(query, params).fetchone()[0]
-        
+
         return {"total_requests": total}
 
 
@@ -1273,8 +1273,6 @@ def cleanup_old_logs(days_to_keep=30):
             conn.commit()
             cur.close()
         else:
-            conn.execute(
-                f"DELETE FROM audit_log WHERE created_at < datetime('now', '-{days_to_keep} days')"
-            )
+            conn.execute(f"DELETE FROM audit_log WHERE created_at < datetime('now', '-{days_to_keep} days')")
             deleted = 0
         return deleted

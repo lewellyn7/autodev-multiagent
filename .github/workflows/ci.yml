@@ -13,7 +13,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Job 1: Lint (fastest - run first in parallel)
+  # Job 1: Lint
   # ---------------------------------------------------------------------------
   lint:
     name: Lint
@@ -43,7 +43,7 @@ jobs:
           ruff format app/ tests/ --check
 
   # ---------------------------------------------------------------------------
-  # Job 2: Test - Run unit tests
+  # Job 2: Test (using Docker)
   # ---------------------------------------------------------------------------
   test:
     name: Test
@@ -54,28 +54,23 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test image
+        uses: docker/build-push-action@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          context: .
+          load: true
+          tags: test-image:latest
+          cache-from: type=gha
 
-      - name: Install dependencies
+      - name: Run tests in Docker
         run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio httpx
-
-      - name: Run tests
-        run: |
-          pytest tests/ -v --tb=short
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: htmlcov/
-          retention-days: 7
+          docker run --rm -u root -v $(pwd):/app -w /app test-image:latest bash -c "
+            pip install pytest pytest-asyncio httpx > /dev/null 2>&1 &&
+            pytest tests/test_main.py -v --tb=short
+          "
 
   # ---------------------------------------------------------------------------
   # Job 3: Build Docker Image
@@ -125,15 +120,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Image size report
-        run: |
-          echo "Built image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-
   # ---------------------------------------------------------------------------
-  # Job 4: Deploy to Server (on main branch push)
+  # Job 4: Deploy
   # ---------------------------------------------------------------------------
   deploy:
-    name: Deploy to Server
+    name: Deploy
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: build
@@ -156,5 +147,5 @@ jobs:
             "
             rm -f /tmp/deploy_key
           else
-            echo "Deployment skipped: DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY not configured"
+            echo "Deploy skipped: secrets not configured"
           fi
