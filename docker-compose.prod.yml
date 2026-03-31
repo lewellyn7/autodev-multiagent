@@ -21,15 +21,14 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - ai-gateway-net
+      ai-gateway-net:
+        ipv4_address: 172.20.0.10  # 固定 IP
 
   # ---------------------------------------------------------------------------
   # AI Gateway Application
   # ---------------------------------------------------------------------------
   ai-gateway:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/lewellyn7/autodev-multiagent:latest
     container_name: ai-gateway
     restart: on-failure
     depends_on:
@@ -38,7 +37,7 @@ services:
     ports:
       - "${PORT:-28000}:8000"
     environment:
-      # Database
+      # Database - 使用服务名作为主机名（Docker DNS）
       DB_TYPE: postgres
       DB_FILE: /app/data/gateway.db
       POSTGRES_HOST: postgres
@@ -67,11 +66,17 @@ services:
       retries: 3
       start_period: 10s
     networks:
-      - ai-gateway-net
+      ai-gateway-net:
+        ipv4_address: 172.20.0.11  # 固定 IP
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 networks:
   ai-gateway-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
 
 volumes:
   postgres_data:

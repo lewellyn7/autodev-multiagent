@@ -1,5 +1,5 @@
 # =============================================================================
-# AI Gateway - Docker Compose
+# AI Gateway - Docker Compose (Default: PostgreSQL)
 # =============================================================================
 services:
   # ---------------------------------------------------------------------------
@@ -21,7 +21,8 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - ai-gateway-net
+      ai-gateway-net:
+        ipv4_address: 172.20.0.10
 
   # ---------------------------------------------------------------------------
   # AI Gateway Application
@@ -68,7 +69,8 @@ services:
       retries: 3
       start_period: 10s
     networks:
-      - ai-gateway-net
+      ai-gateway-net:
+        ipv4_address: 172.20.0.11
 
   # ---------------------------------------------------------------------------
   # Optional: Redis for caching/rate limiting
@@ -85,13 +87,17 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - ai-gateway-net
+      ai-gateway-net:
+        ipv4_address: 172.20.0.12
     profiles:
       - with-redis
 
 networks:
   ai-gateway-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
 
 volumes:
   postgres_data:
