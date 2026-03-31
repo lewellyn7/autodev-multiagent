@@ -55,7 +55,7 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
             target_source = v
             break
 
-    pool = db.get_pool_data_sync(target_source)
+    pool = db.get_pool_data(target_source)
     api_key = None
     if pool:
         t = pool.get("tokens", {})
@@ -104,7 +104,7 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
 @router.get("/models")
 async def list_models():
     """List available models."""
-    models = db.get_all_models_sync()
+    models = db.get_models()
     data = []
     for m in models:
         data.append(
