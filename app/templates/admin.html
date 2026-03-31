@@ -134,22 +134,42 @@
             <div v-if="currentTab==='dashboard'">
                 <h1 class="text-xl font-bold text-gray-800 dark:text-white mb-6">📊 概览仪表盘</h1>
                 <!-- Stats Grid -->
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                    <div class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4" style="border-top: 3px solid #6366f1;">
-                        <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">活跃模型</div>
-                        <div class="text-2xl font-bold text-gray-800 dark:text-white">[[ models.length ]]</div>
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div @click="currentTab='models'" class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5 cursor-pointer hover:shadow-md transition" style="border-top: 3px solid #6366f1;">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">📚 模型库</div>
+                                <div class="text-2xl font-bold text-gray-800 dark:text-white">[[ models.length ]]</div>
+                            </div>
+                            <div class="text-2xl">📚</div>
+                        </div>
                     </div>
-                    <div class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4" style="border-top: 3px solid #10b981;">
-                        <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">有效代理</div>
-                        <div class="text-2xl font-bold text-green-600 dark:text-green-400">[[ activePoolCount ]]</div>
+                    <div @click="currentTab='pool'" class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5 cursor-pointer hover:shadow-md transition" style="border-top: 3px solid #10b981;">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">🍪 代理池</div>
+                                <div class="text-2xl font-bold text-green-600 dark:text-green-400">[[ activePoolCount ]] / [[ pool.length ]]</div>
+                            </div>
+                            <div class="text-2xl">🍪</div>
+                        </div>
                     </div>
-                    <div class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4" style="border-top: 3px solid #f59e0b;">
-                        <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">客户端密钥</div>
-                        <div class="text-2xl font-bold text-gray-800 dark:text-white">[[ keys.length ]]</div>
+                    <div @click="currentTab='keys'" class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5 cursor-pointer hover:shadow-md transition" style="border-top: 3px solid #f59e0b;">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">🔑 密钥</div>
+                                <div class="text-2xl font-bold text-gray-800 dark:text-white">[[ keys.length ]]</div>
+                            </div>
+                            <div class="text-2xl">🔑</div>
+                        </div>
                     </div>
-                    <div class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4" style="border-top: 3px solid #ef4444;">
-                        <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">有效率</div>
-                        <div class="text-2xl font-bold" :class="pool.length > 0 ? (activePoolCount / pool.length * 100 > 50 ? 'text-green-600 dark:text-green-400' : 'text-red-500') : 'text-gray-400'">[[ pool.length > 0 ? Math.round(activePoolCount / pool.length * 100) + '%' : '0%' ]]</div>
+                    <div @click="currentTab='usage'" class="stat-card card bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5 cursor-pointer hover:shadow-md transition" style="border-top: 3px solid #ef4444;">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">💰 配额状态</div>
+                                <div class="text-lg font-bold" :class="pool.length > 0 ? (activePoolCount / pool.length * 100 > 50 ? 'text-green-600' : 'text-red-500') : 'text-gray-400'">[[ pool.length > 0 ? Math.round(activePoolCount / pool.length * 100) + '%' : '0%' ]]</div>
+                            </div>
+                            <div class="text-2xl">💰</div>
+                        </div>
                     </div>
                 </div>
 
@@ -160,7 +180,7 @@
                         <button @click="currentTab='pool'" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">查看全部 →</button>
                     </div>
                     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 p-6">
-                        <div v-for="p in pool.slice(0,4)" :key="p.source" class="text-center">
+                        <div v-for="p in pool.slice(0,4)" :key="p.source" class="text-center p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition" @click="currentTab='pool'">
                             <div class="source-badge inline-block mb-2" :style="'background:' + sourceColor(p.source)">[[ p.source ]]</div>
                             <div class="text-lg font-bold" :class="p.status === 'active' ? 'text-green-600' : p.status === 'expired' ? 'text-red-500' : 'text-gray-400'">[[ p.status === 'active' ? '✅' : p.status === 'expired' ? '❌' : '❓' ]]</div>
                             <div class="text-[10px] text-gray-400">[[ p.cookie_count ]] cookies</div>
@@ -206,19 +226,19 @@
                         </button>
                     </div>
                     <div v-if="openaiUsage" class="p-6">
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                            <div class="bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 rounded-xl p-5">
-                                <div class="text-[10px] text-indigo-400 uppercase tracking-wider mb-1">本月使用</div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                            <div class="bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 rounded-xl p-5 card cursor-pointer hover:shadow-md transition">
+                                <div class="text-[10px] text-indigo-400 uppercase tracking-wider mb-1">💸 本月使用</div>
                                 <div class="text-2xl font-bold text-indigo-600 dark:text-indigo-400">$[[ openaiUsage.total_usage_usd ]]</div>
-                                <div class="text-xs text-gray-400 mt-1">共 [[ openaiUsage.daily_avg ]]/天</div>
+                                <div class="text-xs text-gray-400 mt-1">日均 $[[ openaiUsage.daily_avg ]]</div>
                             </div>
-                            <div class="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-xl p-5">
-                                <div class="text-[10px] text-green-400 uppercase tracking-wider mb-1">剩余配额</div>
+                            <div class="bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-xl p-5 card cursor-pointer hover:shadow-md transition">
+                                <div class="text-[10px] text-green-400 uppercase tracking-wider mb-1">💰 剩余配额</div>
                                 <div class="text-2xl font-bold text-green-600 dark:text-green-400">$[[ openaiUsage.remaining_usd ]]</div>
                                 <div class="text-xs text-gray-400 mt-1">上限 $[[ openaiUsage.soft_limit_usd ]]</div>
                             </div>
-                            <div class="bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 rounded-xl p-5">
-                                <div class="text-[10px] text-orange-400 uppercase tracking-wider mb-1">重置时间</div>
+                            <div class="bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 rounded-xl p-5 card cursor-pointer hover:shadow-md transition">
+                                <div class="text-[10px] text-orange-400 uppercase tracking-wider mb-1">📅 重置时间</div>
                                 <div class="text-2xl font-bold text-orange-600 dark:text-orange-400">[[ openaiUsage.days_until_reset ]] 天</div>
                                 <div class="text-xs text-gray-400 mt-1">[[ new Date(openaiUsage.reset_date).toLocaleDateString('zh-CN') ]]</div>
                             </div>
