@@ -1,0 +1,29 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "C4",    # flake8-comprehensions
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E722",   # bare except (too many legacy uses)
+    "E402",   # module level import not at top (for conditional imports)
+    "B008",   # Depends in argument defaults (FastAPI pattern)
+    "B904",   # raise from in except (debatable)
+    "B905",   # zip without strict (newer rule)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

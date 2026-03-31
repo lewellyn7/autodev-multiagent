@@ -1,13 +1,16 @@
 """
 Provider Wrapper Base - 统一异步 API 调用接口
 """
-import httpx
+
 import json
-from typing import AsyncIterator, Optional, Any
+from collections.abc import AsyncIterator
+
+import httpx
 
 
 class ProviderError(Exception):
     """Provider 调用错误"""
+
     def __init__(self, provider: str, message: str, status_code: int = None):
         self.provider = provider
         self.message = message
@@ -17,23 +20,18 @@ class ProviderError(Exception):
 
 class BaseProvider:
     """Provider 基类"""
-    
+
     def __init__(self, name: str, base_url: str = None):
         self.name = name
         self.base_url = base_url
         self.timeout = httpx.Timeout(60.0, connect=10.0)
-    
+
     async def completion(
-        self,
-        model: str,
-        messages: list,
-        stream: bool = False,
-        api_key: str = None,
-        **kwargs
+        self, model: str, messages: list, stream: bool = False, api_key: str = None, **kwargs
     ) -> dict | AsyncIterator[dict]:
         """发起 completion 请求"""
         raise NotImplementedError
-    
+
     async def close(self):
         """关闭连接"""
         pass

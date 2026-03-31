@@ -1,26 +1,28 @@
 """
 Moonshot Provider - Moonshot API 包装器
 """
+
 import httpx
+
 from . import BaseProvider, ProviderError, stream_response
 
 
 class MoonshotProvider(BaseProvider):
     """Moonshot AI API"""
-    
+
     BASE_URL = "https://api.moonshot.cn/v1"
-    
+
     def __init__(self):
         super().__init__("moonshot", self.BASE_URL)
-    
+
     async def completion(self, model: str, messages: list, stream: bool = False, api_key: str = None, **kwargs):
         if not api_key:
             raise ProviderError(self.name, "API key required", 401)
-        
+
         url = f"{self.base_url}/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         data = {"model": model, "messages": messages, "stream": stream, **kwargs}
-        
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.post(url, headers=headers, json=data)

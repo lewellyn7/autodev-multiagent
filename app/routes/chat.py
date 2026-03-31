@@ -1,11 +1,14 @@
 """
 Chat Routes - /v1/chat/completions
 """
-import json, time, uuid
+
+import json
+import time
+
+import litellm
 from fastapi import APIRouter, Depends, JSONResponse
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-import litellm
 
 import app.database as db
 
@@ -37,9 +40,13 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
             return JSONResponse({"error": "Model not allowed"}, 403)
 
     source_map = {
-        "gpt": "chatgpt", "o1-": "chatgpt",
-        "claude": "claude", "gemini": "gemini",
-        "deepseek": "deepseek", "moonshot": "moonshot", "qwen": "qwen",
+        "gpt": "chatgpt",
+        "o1-": "chatgpt",
+        "claude": "claude",
+        "gemini": "gemini",
+        "deepseek": "deepseek",
+        "moonshot": "moonshot",
+        "qwen": "qwen",
     }
     target_source = "chatgpt"
     for k, v in source_map.items():
@@ -65,6 +72,7 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
         return JSONResponse({"error": f"LiteLLM Error: {str(e)}"}, 500)
 
     if req.stream:
+
         async def stream_gen():
             try:
                 async for chunk in response:
@@ -82,11 +90,13 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
             "object": "chat.completion",
             "created": int(time.time()),
             "model": response.model,
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": response.choices[0].message.content},
-                "finish_reason": response.choices[0].finish_reason,
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": response.choices[0].message.content},
+                    "finish_reason": response.choices[0].finish_reason,
+                }
+            ],
         }
 
 
@@ -96,10 +106,12 @@ async def list_models():
     models = db.get_all_models_sync()
     data = []
     for m in models:
-        data.append({
-            "id": m["name"],
-            "object": "model",
-            "created": int(time.time()),
-            "owned_by": m["source"],
-        })
+        data.append(
+            {
+                "id": m["name"],
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": m["source"],
+            }
+        )
     return {"object": "list", "data": data}

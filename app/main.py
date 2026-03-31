@@ -1,15 +1,19 @@
-import os, json, secrets, time, uuid, httpx, asyncio
+import json
+import os
+import secrets
+import time
 from datetime import datetime, timedelta
-from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException, Depends, Form, Response, Body
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import app.database as db
-import litellm
 
+import httpx
+import litellm
 from curl_cffi.requests import AsyncSession
+from fastapi import Body, Depends, FastAPI, Form, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+
+import app.database as db
 from app.middleware import RateLimitMiddleware
 
 # =============================================================================
@@ -30,12 +34,14 @@ DEBUG = APP_CONFIG["debug"]
 # Structured Logging
 # =============================================================================
 import logging
+
 logging.basicConfig(
     level=logging.DEBUG if DEBUG else logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("ai-gateway")
+
 
 # =============================================================================
 # Models
@@ -44,13 +50,18 @@ class SyncData(BaseModel):
     source: str
     cookies: dict
     tokens: dict
+
+
 class ChatMsg(BaseModel):
     role: str
     content: str
+
+
 class ChatReq(BaseModel):
     model: str
     messages: list[ChatMsg]
     stream: bool = False
+
 
 # =============================================================================
 # App
@@ -62,7 +73,7 @@ app = FastAPI(
     description="""
 ## 🦞 AI Gateway - Multi-LLM Proxy API
 
-A unified API gateway that aggregates multiple LLM providers (ChatGPT, Claude, DeepSeek, Moonshot, Qwen, etc.) 
+A unified API gateway that aggregates multiple LLM providers (ChatGPT, Claude, DeepSeek, Moonshot, Qwen, etc.)
 behind a single OpenAI-compatible interface.
 
 ### Features
@@ -110,60 +121,74 @@ app.add_middleware(RateLimitMiddleware)
 # =============================================================================
 import time as time_module
 
+
 class AuditMiddleware:
     """Middleware to log all API requests for audit purposes."""
-    
+
     SENSITIVE_FIELDS = [
-        'password', 'passwd', 'pwd', 'secret', 'token', 'api_key', 'apikey',
-        'access_token', 'refresh_token', 'auth', 'authorization', 'credential',
-        'private_key', 'secret_key', 'secretkey', 'key'
+        "password",
+        "passwd",
+        "pwd",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "access_token",
+        "refresh_token",
+        "auth",
+        "authorization",
+        "credential",
+        "private_key",
+        "secret_key",
+        "secretkey",
+        "key",
     ]
-    
+
     def __init__(self, app):
         self.app = app
-    
+
     async def __call__(self, scope, receive, send):
-        if scope['type'] != 'http':
+        if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        
+
         start_time = time_module.time()
-        method = scope['method']
-        path = scope['path']
-        
-        client = scope.get('client', ('unknown', 0))
-        ip_address = client[0] if client else 'unknown'
-        
-        headers = dict(scope.get('headers', []))
-        auth_header = headers.get(b'authorization', b'').decode()
-        user_id = 'anonymous'
-        if auth_header.startswith('Bearer '):
+        method = scope["method"]
+        path = scope["path"]
+
+        client = scope.get("client", ("unknown", 0))
+        ip_address = client[0] if client else "unknown"
+
+        headers = dict(scope.get("headers", []))
+        auth_header = headers.get(b"authorization", b"").decode()
+        user_id = "anonymous"
+        if auth_header.startswith("Bearer "):
             user_id = auth_header[7:]
         elif not auth_header:
-            cookie_header = headers.get(b'cookie', b'').decode()
-            if 'admin_token' in cookie_header:
-                user_id = 'admin'
-        
-        if '/api/' in path or '/v1/' in path:
-            action = 'API_CALL'
-        elif path in ['/', '/login', '/admin']:
-            action = 'PAGE_VIEW'
+            cookie_header = headers.get(b"cookie", b"").decode()
+            if "admin_token" in cookie_header:
+                user_id = "admin"
+
+        if "/api/" in path or "/v1/" in path:
+            action = "API_CALL"
+        elif path in ["/", "/login", "/admin"]:
+            action = "PAGE_VIEW"
         else:
-            action = 'UNKNOWN'
-        
+            action = "UNKNOWN"
+
         request_body = None
-        content_length = int(headers.get(b'content-length', 0))
-        if scope['method'] in ['POST', 'PUT', 'PATCH'] and content_length > 0:
-            request_body = f'[Body: {content_length} bytes]'
-        
+        content_length = int(headers.get(b"content-length", 0))
+        if scope["method"] in ["POST", "PUT", "PATCH"] and content_length > 0:
+            request_body = f"[Body: {content_length} bytes]"
+
         response_status = None
-        
+
         async def send_wrapper(message):
             nonlocal start_time, response_status
-            
-            if message['type'] == 'http.response.start':
-                response_status = message['status']
+
+            if message["type"] == "http.response.start":
+                response_status = message["status"]
                 latency_ms = int((time_module.time() - start_time) * 1000)
-                
+
                 try:
                     db.log_request(
                         action=action,
@@ -173,16 +198,16 @@ class AuditMiddleware:
                         path=path,
                         body=request_body,
                         status=response_status,
-                        latency=latency_ms
+                        latency=latency_ms,
                     )
                 except Exception as e:
                     logger.error(f"Audit logging failed: {e}")
-                
-                if path not in ['/health', '/']:
+
+                if path not in ["/health", "/"]:
                     logger.info(f"AUDIT: {action} {method} {path} {response_status} {latency_ms}ms")
-            
+
             await send(message)
-        
+
         return await self.app(scope, receive, send_wrapper)
 
 
@@ -190,26 +215,28 @@ def sanitize_request_body(body: dict) -> dict:
     """Sanitize sensitive information from request body."""
     if not body:
         return body
-    
+
     sanitized = {}
     for key, value in body.items():
         key_lower = key.lower()
         is_sensitive = any(sensitive in key_lower for sensitive in AuditMiddleware.SENSITIVE_FIELDS)
-        
+
         if is_sensitive:
             if isinstance(value, str):
-                sanitized[key] = value[:2] + '***' if len(value) > 2 else '***'
+                sanitized[key] = value[:2] + "***" if len(value) > 2 else "***"
             else:
-                sanitized[key] = '[REDACTED]'
+                sanitized[key] = "[REDACTED]"
         else:
             sanitized[key] = value
-    
+
     return sanitized
+
 
 app.add_middleware(AuditMiddleware)
 
 db.init_db()
 templates = Jinja2Templates(directory="app/templates")
+
 
 # =============================================================================
 # Dependencies
@@ -220,6 +247,7 @@ async def api_auth(request: Request):
         logger.warning(f"Unauthorized admin access attempt from {request.client.host}")
         raise HTTPException(401, "Unauthorized")
 
+
 async def verify_client_key(request: Request):
     auth = request.headers.get("Authorization")
     if not auth or not auth.startswith("Bearer "):
@@ -228,6 +256,7 @@ async def verify_client_key(request: Request):
     if not key_info:
         raise HTTPException(401, "Invalid Key")
     return key_info
+
 
 # =============================================================================
 # Health Check Endpoint
@@ -241,12 +270,14 @@ async def health_check():
         "timestamp": time.time(),
     }
 
+
 # =============================================================================
 # Auth Routes
 # =============================================================================
 @app.get("/login", response_class=HTMLResponse, tags=["auth"])
 async def login_page(r: Request):
     return templates.TemplateResponse("login.html", {"request": r})
+
 
 @app.post("/login", tags=["auth"])
 async def login_do(username: str = Form(...), password: str = Form(...)):
@@ -258,6 +289,7 @@ async def login_do(username: str = Form(...), password: str = Form(...)):
     logger.warning(f"Failed login attempt for user: {username}")
     return JSONResponse({"status": "error", "msg": "Invalid credentials"}, 401)
 
+
 # =============================================================================
 # Admin Dashboard
 # =============================================================================
@@ -265,13 +297,17 @@ async def login_do(username: str = Form(...), password: str = Form(...)):
 async def index(r: Request):
     if r.cookies.get("admin_token") != SESSION_KEY:
         return RedirectResponse("/login", 302)
-    return templates.TemplateResponse("admin.html", {
-        "request": r,
-        "pool": db.get_all_pool_status(),
-        "models": db.get_models(),
-        "expired_models": db.get_expired_models(),
-        "keys": db.list_keys(),
-    })
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": r,
+            "pool": db.get_all_pool_status(),
+            "models": db.get_models(),
+            "expired_models": db.get_expired_models(),
+            "keys": db.list_keys(),
+        },
+    )
+
 
 # =============================================================================
 # Pool Management
@@ -282,11 +318,13 @@ async def sync_pool(data: SyncData):
     logger.info(f"Pool synced for source: {data.source}")
     return {"status": "success", "msg": f"Synced {data.source}"}
 
+
 @app.delete("/api/pool/{source}", tags=["pool"])
 async def delete_pool_item(source: str, _=Depends(api_auth)):
     db.delete_pool_data(source)
     logger.info(f"Pool item deleted: {source}")
     return {"status": "success"}
+
 
 @app.post("/api/pool/update_token", tags=["pool"])
 async def update_pool_token(source: str = Form(...), token: str = Form(...), _=Depends(api_auth)):
@@ -301,6 +339,7 @@ async def update_pool_token(source: str = Form(...), token: str = Form(...), _=D
     db.update_pool_status(source, "unknown")
     logger.info(f"Token updated for source: {source}")
     return {"status": "success", "msg": "Updated"}
+
 
 @app.post("/api/pool/test", tags=["pool"])
 async def test_pool_item(source: str = Form(...), _=Depends(api_auth)):
@@ -438,6 +477,7 @@ async def test_pool_item(source: str = Form(...), _=Depends(api_auth)):
     db.update_pool_status(source, "active" if is_valid else "expired")
     return {"status": "success", "data": {"valid": is_valid, "msg": details}}
 
+
 # =============================================================================
 # OpenAI Subscription & Usage (NEW)
 # =============================================================================
@@ -450,58 +490,56 @@ async def get_openai_subscription(_=Depends(api_auth)):
     pool = db.get_pool_data("openai")
     if not pool:
         return JSONResponse({"status": "error", "msg": "OpenAI pool not configured"}, 400)
-    
+
     tokens = pool.get("tokens", {})
     api_key = tokens.get("apiKey") or tokens.get("key") or tokens.get("token")
     if not api_key:
         return JSONResponse({"status": "error", "msg": "OpenAI API key not found"}, 400)
-    
+
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     }
-    
+
     try:
         async with AsyncSession(impersonate="chrome120", verify=False, timeout=30) as s:
             # Get subscription info
             sub_r = await s.get("https://api.openai.com/v1/dashboard/billing/subscription", headers=headers)
-            
+
             if sub_r.status_code != 200:
-                return JSONResponse({
-                    "status": "error", 
-                    "msg": f"API error: {sub_r.status_code}",
-                    "detail": sub_r.text
-                }, 400)
-            
+                return JSONResponse(
+                    {"status": "error", "msg": f"API error: {sub_r.status_code}", "detail": sub_r.text}, 400
+                )
+
             sub_data = sub_r.json()
-            
+
             # Get current usage
             now = datetime.utcnow()
             start_date = now.replace(day=1).strftime("%Y-%m-%d")
             end_date = (now.replace(day=1) + timedelta(days=32)).replace(day=1).strftime("%Y-%m-%d")
-            
+
             usage_r = await s.get(
                 f"https://api.openai.com/v1/dashboard/billing/usage?start_date={start_date}&end_date={end_date}",
-                headers=headers
+                headers=headers,
             )
-            
+
             usage_data = usage_r.json() if usage_r.status_code == 200 else {}
-            
+
             # Calculate totals
             total_usage = usage_data.get("total_usage", 0) / 100  # cents to dollars
-            
+
             # Subscription info
             plan = sub_data.get("plan", {})
             soft_limit = sub_data.get("hard_limit_usd", 0)
             hard_limit = sub_data.get("hard_limit_usd", 0)
             has_payment_method = sub_data.get("has_payment_method", False)
-            
+
             # Calculate reset date (1st of next month UTC)
             if now.day >= 1:
                 reset_date = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
             else:
                 reset_date = now.replace(day=1)
-            
+
             return {
                 "status": "success",
                 "data": {
@@ -518,9 +556,9 @@ async def get_openai_subscription(_=Depends(api_auth)):
                     "reset_date": reset_date.isoformat() + "Z",
                     "days_until_reset": (reset_date - now).days,
                     "daily_avg": round(total_usage / max(1, now.day), 2),
-                }
+                },
             }
-            
+
     except httpx.TimeoutException:
         return JSONResponse({"status": "error", "msg": "请求超时"}, 400)
     except httpx.HTTPError as e:
@@ -537,7 +575,7 @@ async def get_pool_stats(source: str, _=Depends(api_auth)):
     pool = db.get_pool_data(source)
     if not pool:
         return JSONResponse({"status": "error", "msg": "Pool not found"}, 404)
-    
+
     # Get usage for OpenAI
     if source == "openai":
         tokens = pool.get("tokens", {})
@@ -551,12 +589,10 @@ async def get_pool_stats(source: str, _=Depends(api_auth)):
                     model_list = []
                     if models_r.status_code == 200:
                         for m in models_r.json().get("data", []):
-                            model_list.append({
-                                "id": m["id"],
-                                "created": m.get("created", 0),
-                                "owned_by": m.get("owned_by", "")
-                            })
-                    
+                            model_list.append(
+                                {"id": m["id"], "created": m.get("created", 0), "owned_by": m.get("owned_by", "")}
+                            )
+
                     return {
                         "status": "success",
                         "data": {
@@ -565,20 +601,19 @@ async def get_pool_stats(source: str, _=Depends(api_auth)):
                             "cookie_count": len(pool.get("cookies", {})),
                             "has_api_key": bool(api_key),
                             "models_count": len(model_list),
-                        }
+                        },
                     }
             except:
                 pass
-    
+
     return {
         "status": "success",
         "data": {
             "source": source,
             "status": pool.get("status", "unknown"),
             "cookie_count": len(pool.get("cookies", {})),
-        }
+        },
     }
-
 
 
 # =============================================================================
@@ -587,7 +622,7 @@ async def get_pool_stats(source: str, _=Depends(api_auth)):
 @app.get("/api/pool/{source}/account", tags=["pool"])
 async def get_polling_account(source: str, strategy: str = "round_robin", _=Depends(api_auth)):
     """Get next available account based on polling strategy.
-    
+
     Strategies:
     - round_robin: Cyclic rotation (default)
     - random: Random selection
@@ -597,20 +632,27 @@ async def get_polling_account(source: str, strategy: str = "round_robin", _=Depe
     account = db.get_pool_by_strategy(source, strategy)
     if not account:
         return JSONResponse({"status": "error", "msg": f"No active account for {source}"}, 404)
-    return {"status": "success", "data": {
-        "id": account["id"],
-        "source": account["source"],
-        "account_index": account["account_index"],
-        "cookies": account["cookies"],
-        "tokens": account["tokens"],
-        "strategy_used": strategy
-    }}
+    return {
+        "status": "success",
+        "data": {
+            "id": account["id"],
+            "source": account["source"],
+            "account_index": account["account_index"],
+            "cookies": account["cookies"],
+            "tokens": account["tokens"],
+            "strategy_used": strategy,
+        },
+    }
+
 
 @app.post("/api/pool/{source}/account/{account_id}/report", tags=["pool"])
-async def report_account_result(source: str, account_id: int, success: bool = Form(...), latency: float = Form(None), _=Depends(api_auth)):
+async def report_account_result(
+    source: str, account_id: int, success: bool = Form(...), latency: float = Form(None), _=Depends(api_auth)
+):
     """Report request result for an account (for stats tracking)."""
     db.update_account_stats(int(account_id), success, latency)
     return {"status": "success"}
+
 
 @app.get("/api/pool/{source}/health", tags=["pool"])
 async def get_pool_health(source: str, _=Depends(api_auth)):
@@ -618,10 +660,18 @@ async def get_pool_health(source: str, _=Depends(api_auth)):
     health = db.get_account_health(source)
     return {"status": "success", "data": health}
 
+
 @app.post("/api/pool/{source}/account/add", tags=["pool"])
-async def add_pool_account(source: str, account_index: int = Form(...), cookies: str = Form("{}"), tokens: str = Form("{}"), _=Depends(api_auth)):
+async def add_pool_account(
+    source: str,
+    account_index: int = Form(...),
+    cookies: str = Form("{}"),
+    tokens: str = Form("{}"),
+    _=Depends(api_auth),
+):
     """Add a proxy account to the pool."""
     import json
+
     try:
         cookies_dict = json.loads(cookies)
         tokens_dict = json.loads(tokens)
@@ -631,6 +681,7 @@ async def add_pool_account(source: str, account_index: int = Form(...), cookies:
     logger.info(f"Proxy account added: {source}[{account_index}]")
     return {"status": "success"}
 
+
 @app.delete("/api/pool/{source}/account/{account_id}", tags=["pool"])
 async def delete_pool_account(source: str, account_id: int, _=Depends(api_auth)):
     """Delete a proxy account."""
@@ -638,10 +689,10 @@ async def delete_pool_account(source: str, account_id: int, _=Depends(api_auth))
     return {"status": "success"}
 
 
-
 # =============================================================================
 # Health Score API - Multi-dimensional health evaluation
 # =============================================================================
+
 
 @app.get("/api/pool/{source}/score", tags=["pool"])
 async def get_pool_score(source: str, max_latency: float = 5000, _=Depends(api_auth)):
@@ -670,12 +721,12 @@ async def get_best_pool_account(source: str, strategy: str = "health_score", _=D
         account = db.get_best_account(source, strategy)
         if not account:
             return JSONResponse({"status": "error", "msg": f"No active account for {source}"}, 404)
-        
+
         # Calculate health score for the best account
-        health = db.calculate_account_health(account['id'])
-        
+        health = db.calculate_account_health(account["id"])
+
         return {
-            "status": "success", 
+            "status": "success",
             "data": {
                 "account": {
                     "id": account["id"],
@@ -684,8 +735,8 @@ async def get_best_pool_account(source: str, strategy: str = "health_score", _=D
                     "status": account["status"],
                 },
                 "health_score": health["score"] if health else None,
-                "strategy_used": strategy
-            }
+                "strategy_used": strategy,
+            },
         }
     except Exception as e:
         logger.error(f"Error getting best account: {e}")
@@ -693,12 +744,7 @@ async def get_best_pool_account(source: str, strategy: str = "health_score", _=D
 
 
 @app.post("/api/pool/{source}/account/{account_id}/concurrent", tags=["pool"])
-async def update_account_concurrent(
-    source: str, 
-    account_id: int, 
-    delta: int = Form(...),
-    _=Depends(api_auth)
-):
+async def update_account_concurrent(source: str, account_id: int, delta: int = Form(...), _=Depends(api_auth)):
     """
     Update concurrent request count for an account.
     Use delta: +1 to increment, -1 to decrement.
@@ -713,11 +759,7 @@ async def update_account_concurrent(
 
 @app.put("/api/pool/{source}/account/{account_id}/config", tags=["pool"])
 async def update_account_config(
-    source: str,
-    account_id: int,
-    max_concurrent: int = Body(None),
-    priority: int = Body(None),
-    _=Depends(api_auth)
+    source: str, account_id: int, max_concurrent: int = Body(None), priority: int = Body(None), _=Depends(api_auth)
 ):
     """
     Update account configuration.
@@ -744,6 +786,7 @@ async def add_model(name: str = Form(...), source: str = Form(...), _=Depends(ap
     logger.info(f"Model added: {name} ({source})")
     return {"status": "ok"}
 
+
 @app.delete("/api/models/{id}", tags=["models"])
 async def del_model(id: int, _=Depends(api_auth)):
     model = db.get_model_by_id(id)
@@ -753,11 +796,13 @@ async def del_model(id: int, _=Depends(api_auth)):
         logger.info(f"Model deleted (moved to expired): {model['name']}")
     return {"status": "ok"}
 
+
 @app.delete("/api/models/expired/{id}", tags=["models"])
 async def del_expired_model(id: int, _=Depends(api_auth)):
     db.del_expired_model(id)
     logger.info(f"Expired model removed: id={id}")
     return {"status": "ok"}
+
 
 @app.post("/api/models/fetch", tags=["models"])
 async def fetch_models_api(source: str = Form(...), api_key: str = Form(None), _=Depends(api_auth)):
@@ -847,6 +892,7 @@ async def fetch_models_api(source: str = Form(...), api_key: str = Form(None), _
             return {"status": "success", "msg": f"更新 {len(valid)} 个模型"}
     return {"status": "error", "msg": "未找到模型"}
 
+
 # =============================================================================
 # API Key Management
 # =============================================================================
@@ -857,17 +903,20 @@ async def add_key(name: str = Form(...), models: str = Form(""), _=Depends(api_a
     logger.info(f"API key created: {name} (models: {models or 'all'})")
     return {"status": "ok", "key": k}
 
+
 @app.put("/api/keys/{key}", tags=["keys"])
 async def upd_key(key: str, name: str = Body(...), models: str = Body(""), _=Depends(api_auth)):
     db.update_key(key, name, models)
     logger.info(f"API key updated: {key[:12]}...")
     return {"status": "ok"}
 
+
 @app.delete("/api/keys/{key}", tags=["keys"])
 async def del_key(key: str, _=Depends(api_auth)):
     db.del_key(key)
     logger.info(f"API key deleted: {key[:12]}...")
     return {"status": "ok"}
+
 
 # =============================================================================
 # OpenAI Compatible API
@@ -877,13 +926,16 @@ async def list_models(request: Request):
     models = db.get_models()
     data = []
     for m in models:
-        data.append({
-            "id": m["name"],
-            "object": "model",
-            "created": int(time.time()),
-            "owned_by": m["source"],
-        })
+        data.append(
+            {
+                "id": m["name"],
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": m["source"],
+            }
+        )
     return {"object": "list", "data": data}
+
 
 @app.post("/v1/chat/completions", tags=["openai"])
 async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_key)):
@@ -895,9 +947,13 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
 
     # Map model to provider and get API key
     source_map = {
-        "gpt": "chatgpt", "o1-": "chatgpt",
-        "claude": "claude", "gemini": "gemini",
-        "deepseek": "deepseek", "moonshot": "moonshot", "qwen": "qwen",
+        "gpt": "chatgpt",
+        "o1-": "chatgpt",
+        "claude": "claude",
+        "gemini": "gemini",
+        "deepseek": "deepseek",
+        "moonshot": "moonshot",
+        "qwen": "qwen",
     }
     target_source = "chatgpt"
     for k, v in source_map.items():
@@ -924,6 +980,7 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
         return JSONResponse({"error": f"LiteLLM Error: {str(e)}"}, 500)
 
     if req.stream:
+
         async def stream_gen():
             try:
                 async for chunk in response:
@@ -942,12 +999,15 @@ async def chat_completions(req: ChatReq, key_info: dict = Depends(verify_client_
             "object": "chat.completion",
             "created": int(time.time()),
             "model": response.model,
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": response.choices[0].message.content},
-                "finish_reason": response.choices[0].finish_reason,
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": response.choices[0].message.content},
+                    "finish_reason": response.choices[0].finish_reason,
+                }
+            ],
         }
+
 
 @app.get("/api/audit/logs", tags=["audit"])
 async def get_audit_logs(
@@ -961,11 +1021,11 @@ async def get_audit_logs(
     end_date: str = None,
     limit: int = 100,
     offset: int = 0,
-    _: dict = Depends(api_auth)
+    _: dict = Depends(api_auth),
 ):
     """
     Get audit logs with optional filters.
-    
+
     Query Parameters:
     - action: Filter by action type (e.g., "API_CALL", "ADMIN_ACTION")
     - user_id: Filter by user ID
@@ -981,51 +1041,38 @@ async def get_audit_logs(
         # Build filters dict
         filters = {}
         if action:
-            filters['action'] = action
+            filters["action"] = action
         if user_id:
-            filters['user_id'] = user_id
+            filters["user_id"] = user_id
         if method:
-            filters['method'] = method
+            filters["method"] = method
         if path:
-            filters['path'] = path
+            filters["path"] = path
         if status:
-            filters['status'] = status
+            filters["status"] = status
         if start_date:
-            filters['start_date'] = start_date
+            filters["start_date"] = start_date
         if end_date:
-            filters['end_date'] = end_date
-        
+            filters["end_date"] = end_date
+
         # Get logs from database
         logs = db.get_audit_logs(filters=filters if filters else None, limit=limit, offset=offset)
-        
-        return {
-            "status": "success",
-            "data": logs,
-            "pagination": {
-                "limit": limit,
-                "offset": offset,
-                "total": len(logs)
-            }
-        }
+
+        return {"status": "success", "data": logs, "pagination": {"limit": limit, "offset": offset, "total": len(logs)}}
     except Exception as e:
         logger.error(f"Error fetching audit logs: {e}")
         raise HTTPException(500, f"Failed to fetch audit logs: {str(e)}")
 
 
 @app.get("/api/audit/stats", tags=["audit"])
-async def get_audit_stats(
-    request: Request,
-    start_date: str = None,
-    end_date: str = None,
-    _: dict = Depends(api_auth)
-):
+async def get_audit_stats(request: Request, start_date: str = None, end_date: str = None, _: dict = Depends(api_auth)):
     """
     Get audit log statistics.
-    
+
     Query Parameters:
     - start_date: Start timestamp (ISO format)
     - end_date: End timestamp (ISO format)
-    
+
     Returns:
     - total_requests: Total number of requests
     - by_action: Breakdown by action type
@@ -1038,37 +1085,27 @@ async def get_audit_stats(
     """
     try:
         stats = db.get_audit_stats(start_date=start_date, end_date=end_date)
-        return {
-            "status": "success",
-            "data": stats
-        }
+        return {"status": "success", "data": stats}
     except Exception as e:
         logger.error(f"Error fetching audit stats: {e}")
         raise HTTPException(500, f"Failed to fetch audit stats: {str(e)}")
 
 
 @app.post("/api/audit/cleanup", tags=["audit"])
-async def cleanup_audit_logs(
-    days_to_keep: int = Form(30),
-    _: dict = Depends(api_auth)
-):
+async def cleanup_audit_logs(days_to_keep: int = Form(30), _: dict = Depends(api_auth)):
     """
     Clean up old audit logs.
-    
+
     Form Parameters:
     - days_to_keep: Number of days to retain logs (default: 30)
     """
     try:
         deleted = db.cleanup_old_logs(days_to_keep)
         logger.info(f"Cleaned up {deleted} old audit logs")
-        return {
-            "status": "success",
-            "msg": f"Deleted {deleted} old audit log entries"
-        }
+        return {"status": "success", "msg": f"Deleted {deleted} old audit log entries"}
     except Exception as e:
         logger.error(f"Error cleaning up audit logs: {e}")
         raise HTTPException(500, f"Failed to cleanup audit logs: {str(e)}")
-
 
 
 # =============================================================================
@@ -1096,6 +1133,7 @@ PROVIDER_FALLBACK_CHAIN = {
     "qwen": ["deepseek", "chatgpt"],
 }
 
+
 def convert_claude_to_openai(messages: list) -> list:
     """Convert Claude message format to OpenAI format."""
     openai_messages = []
@@ -1122,6 +1160,7 @@ def convert_claude_to_openai(messages: list) -> list:
             openai_messages.append({"role": role, "content": text_content})
     return openai_messages
 
+
 def convert_gemini_to_openai(messages: list) -> list:
     """Convert Gemini message format to OpenAI format."""
     openai_messages = []
@@ -1137,6 +1176,7 @@ def convert_gemini_to_openai(messages: list) -> list:
             text = str(content)
         openai_messages.append({"role": role, "content": text})
     return openai_messages
+
 
 def convert_openai_to_claude(messages: list) -> list:
     """Convert OpenAI message format to Claude format."""
@@ -1158,34 +1198,32 @@ def convert_openai_to_claude(messages: list) -> list:
             claude_messages.append({"role": role, "content": text_content})
     return claude_messages
 
+
 def get_fallback_models(model: str) -> list:
     """Get fallback models for a given model."""
     return MODEL_FALLBACK_CHAIN.get(model, [])
+
 
 def get_fallback_providers(source: str) -> list:
     """Get fallback providers for a given source."""
     return PROVIDER_FALLBACK_CHAIN.get(source, [])
 
+
 def build_openai_error_response(message: str, error_type: str = "invalid_request", code: str = None) -> dict:
     """Build OpenAI compatible error response."""
-    return {
-        "error": {
-            "message": message,
-            "type": error_type,
-            "code": code,
-            "param": None,
-            "status": 400
-        }
-    }
+    return {"error": {"message": message, "type": error_type, "code": code, "param": None, "status": 400}}
+
 
 class StreamingKeepAlive:
     """Send keep-alive comments during streaming to prevent connection timeout."""
+
     def __init__(self, interval_ms: int = 15000):
         self.interval = interval_ms / 1000.0
         self.enabled = True
-    
+
     def __iter__(self):
         import time
+
         last_yield = time.time()
         while self.enabled:
             current_time = time.time()
@@ -1193,9 +1231,10 @@ class StreamingKeepAlive:
                 yield f": keepalive_{int(current_time)}\n\n"
                 last_yield = current_time
             time.sleep(0.1)
-    
+
     def stop(self):
         self.enabled = False
+
 
 # =============================================================================
 # GitHub OAuth Handler
@@ -1207,17 +1246,21 @@ GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 GITHUB_REDIRECT_URI = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:8000/oauth/github/callback")
 
+
 def generate_oauth_state() -> str:
     """Generate a secure random state for OAuth."""
     return secrets.token_urlsafe(32)
+
 
 def encode_oauth_state(state: str) -> str:
     """Encode state with session key for security."""
     # Simple encoding: state:timestamp:hmac
     timestamp = str(int(time.time()))
     import hashlib
+
     signature = hashlib.sha256(f"{state}{SESSION_KEY}{timestamp}".encode()).hexdigest()[:16]
     return base64.urlsafe_b64encode(f"{state}:{timestamp}:{signature}".encode()).decode()
+
 
 def decode_oauth_state(encoded: str) -> bool:
     """Decode and verify OAuth state."""
@@ -1225,6 +1268,7 @@ def decode_oauth_state(encoded: str) -> bool:
         decoded = base64.urlsafe_b64decode(encoded.encode()).decode()
         state, timestamp, signature = decoded.split(":")
         import hashlib
+
         expected_sig = hashlib.sha256(f"{state}{SESSION_KEY}{timestamp}".encode()).hexdigest()[:16]
         if signature != expected_sig:
             return False
@@ -1235,6 +1279,7 @@ def decode_oauth_state(encoded: str) -> bool:
     except:
         return False
 
+
 @app.get("/oauth/github", tags=["oauth"])
 async def oauth_github(request: Request):
     """
@@ -1243,10 +1288,10 @@ async def oauth_github(request: Request):
     """
     if not GITHUB_CLIENT_ID:
         raise HTTPException(500, "GitHub OAuth not configured")
-    
+
     state = generate_oauth_state()
     encoded_state = encode_oauth_state(state)
-    
+
     # Store state in cookie for validation
     params = {
         "client_id": GITHUB_CLIENT_ID,
@@ -1254,13 +1299,14 @@ async def oauth_github(request: Request):
         "scope": "user:email",
         "state": encoded_state,
     }
-    
+
     query = "&".join(f"{k}={v}" for k, v in params.items())
     redirect_url = f"https://github.com/login/oauth/authorize?{query}"
-    
+
     response = RedirectResponse(redirect_url)
     response.set_cookie("oauth_state", encoded_state, max_age=300, httponly=True, samesite="lax")
     return response
+
 
 @app.get("/oauth/github/callback", tags=["oauth"])
 async def oauth_github_callback(request: Request, code: str = None, state: str = None):
@@ -1270,17 +1316,17 @@ async def oauth_github_callback(request: Request, code: str = None, state: str =
     """
     if not code:
         raise HTTPException(400, "Authorization code required")
-    
+
     if not state:
         raise HTTPException(400, "State parameter required")
-    
+
     # Validate state
     # Note: In production, also validate against cookie-stored state
     # For simplicity, we skip strict state validation here
-    
+
     if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
         raise HTTPException(500, "GitHub OAuth not configured")
-    
+
     # Exchange code for access token
     async with httpx.AsyncClient() as client:
         token_response = await client.post(
@@ -1293,39 +1339,39 @@ async def oauth_github_callback(request: Request, code: str = None, state: str =
                 "redirect_uri": GITHUB_REDIRECT_URI,
             },
         )
-        
+
         if token_response.status_code != 200:
             logger.error(f"GitHub token exchange failed: {token_response.text}")
             raise HTTPException(400, "Failed to exchange code for token")
-        
+
         token_data = token_response.json()
         access_token = token_data.get("access_token")
         refresh_token = token_data.get("refresh_token")
         expires_in = token_data.get("expires_in")
         expires_at = int(time.time() + expires_in) if expires_in else None
-        
+
         if not access_token:
             raise HTTPException(400, "No access token received")
-        
+
         # Get user info from GitHub API
         user_response = await client.get(
             "https://api.github.com/user",
-            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github.v3+json"}
+            headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github.v3+json"},
         )
-        
+
         if user_response.status_code != 200:
             logger.error(f"GitHub user info failed: {user_response.text}")
             raise HTTPException(400, "Failed to get user info")
-        
+
         user_data = user_response.json()
         provider_user_id = str(user_data.get("id"))
         email = user_data.get("email")
-        
+
         # If no email in user data, try to get from emails endpoint
         if not email:
             emails_response = await client.get(
                 "https://api.github.com/user/emails",
-                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github.v3+json"}
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github.v3+json"},
             )
             if emails_response.status_code == 200:
                 emails = emails_response.json()
@@ -1333,7 +1379,7 @@ async def oauth_github_callback(request: Request, code: str = None, state: str =
                     if e.get("primary"):
                         email = e.get("email")
                         break
-        
+
         # Store OAuth account in database
         db.add_oauth_account(
             provider="github",
@@ -1341,14 +1387,15 @@ async def oauth_github_callback(request: Request, code: str = None, state: str =
             access_token=access_token,
             refresh_token=refresh_token,
             expires_at=expires_at,
-            email=email
+            email=email,
         )
-        
+
         logger.info(f"GitHub OAuth successful for user: {email} (ID: {provider_user_id})")
-    
+
     # Redirect to admin dashboard or show success page
     # For now, redirect to admin dashboard
     return RedirectResponse("/", 302)
+
 
 @app.get("/api/oauth/accounts", tags=["oauth"])
 async def get_oauth_accounts(request: Request, _=Depends(api_auth)):
@@ -1358,6 +1405,7 @@ async def get_oauth_accounts(request: Request, _=Depends(api_auth)):
     """
     accounts = db.get_all_oauth_accounts()
     return {"status": "success", "data": accounts}
+
 
 @app.delete("/api/oauth/accounts/{provider}", tags=["oauth"])
 async def delete_oauth_account(provider: str, request: Request, _=Depends(api_auth)):
@@ -1370,11 +1418,12 @@ async def delete_oauth_account(provider: str, request: Request, _=Depends(api_au
     logger.info(f"OAuth account unbound: {provider}")
     return {"status": "success", "msg": f"Unbound {provider}"}
 
+
 async def refresh_github_token(provider_user_id: str, current_token: str) -> str:
     """
     Refresh GitHub access token if expired.
     Returns valid access token.
-    
+
     Note: GitHub OAuth tokens don't expire by default unless using
     expiring tokens feature. This is a placeholder for when needed.
     """

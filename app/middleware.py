@@ -2,11 +2,15 @@
 Rate Limiting Middleware for AI Gateway
 Implements sliding window rate limiting per API key.
 """
-import time, asyncio
+
+import asyncio
+import time
 from collections import defaultdict
-from fastapi import Request, HTTPException
+
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+
 
 # =============================================================================
 # In-Memory Rate Limiter (per key)
@@ -82,7 +86,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Determine which limiter to use
-        is_admin_endpoint = path.startswith("/api/pool") or path.startswith("/api/models") or path.startswith("/api/keys")
+        is_admin_endpoint = (
+            path.startswith("/api/pool") or path.startswith("/api/models") or path.startswith("/api/keys")
+        )
         limiter = _admin_limiter if is_admin_endpoint else _global_limiter
 
         # Extract client identifier
@@ -129,7 +135,8 @@ def get_rate_limit_stats() -> dict:
     """Returns current rate limit state for monitoring."""
     total_keys = len(_global_limiter._store)
     active_keys = sum(
-        1 for key, times in _global_limiter._store.items()
+        1
+        for key, times in _global_limiter._store.items()
         if any(t > time.time() - _global_limiter.window for t in times)
     )
     return {
