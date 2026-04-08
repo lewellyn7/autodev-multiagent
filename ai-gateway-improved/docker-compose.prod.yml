@@ -31,7 +31,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: ai-gateway
-    restart: on-failure
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy

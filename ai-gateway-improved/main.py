@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import app.database as db
 import g4f
+import bcrypt
 
 from curl_cffi.requests import AsyncSession
 from app.middleware import RateLimitMiddleware
@@ -15,16 +16,45 @@ from app.middleware import RateLimitMiddleware
 # =============================================================================
 # App Configuration (Externalized)
 # =============================================================================
+# Security: Force ADMIN_PASSWORD to be set (no default)
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+if not ADMIN_PASSWORD:
+    raise RuntimeError(
+        "ADMIN_PASSWORD environment variable must be set. "
+        "Please set it in your .env file or environment."
+    )
+
 APP_CONFIG = {
     "admin_user": os.getenv("ADMIN_USER", "admin"),
-    "admin_pass": os.getenv("ADMIN_PASSWORD", "password"),
+    "admin_pass": ADMIN_PASSWORD,
+    "admin_pass_hash": os.getenv("ADMIN_PASSWORD_HASH", None),
     "session_key": secrets.token_hex(16),
     "debug": os.getenv("DEBUG", "false").lower() == "true",
 }
 ADMIN_USER = APP_CONFIG["admin_user"]
-ADMIN_PASS = APP_CONFIG["admin_pass"]
+ADMIN_PASS_PLAIN = APP_CONFIG["admin_pass"]
+ADMIN_PASS_HASH = APP_CONFIG["admin_pass_hash"]
 SESSION_KEY = APP_CONFIG["session_key"]
 DEBUG = APP_CONFIG["debug"]
+
+# Password verification: use bcrypt hash if available, otherwise plain password
+def verify_admin_password(password: str) -> bool:
+    """Verify admin password using bcrypt hash or plain password fallback."""
+    if ADMIN_PASS_HASH:
+        return bcrypt.checkpw(password.encode(), ADMIN_PASS_HASH.encode())
+    else:
+        # Fallback to plain password (with warning)
+        import logging
+        logger = logging.getLogger("ai-gateway")
+        logger.warning("WARNING: Using plain text password fallback. Set ADMIN_PASSWORD_HASH for production!")
+        return password == ADMIN_PASS_PLAIN
+
+# =============================================================================
+# Password Hash Generation Utility
+# =============================================================================
+def hash_password(password: str) -> str:
+    """Generate bcrypt hash for a password. Run once to generate hash, then set ADMIN_PASSWORD_HASH env var."""
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 # =============================================================================
 # Structured Logging
@@ -94,9 +124,16 @@ behind a single OpenAI-compatible interface.
     redoc_url="/redoc",
     docs_theme="universe",
 )
+# Security: CORS configuration - read from environment variable
+# Default to specific origins, never use "*" with allow_credentials=True
+ALLOWED_ORIGINS = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://localhost:8000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -138,20 +175,63 @@ async def health_check():
     }
 
 # =============================================================================
+# Pydantic Models for Input Validation
+# =============================================================================
+class LoginForm(BaseModel):
+    username: str
+    password: str
+
+
+# Rate limit storage for login attempts
+_login_attempts: dict = {}
+_login_lock = asyncio.Lock()
+
+
+async def check_login_rate_limit(ip: str) -> bool:
+    """Check if IP has exceeded login attempt limit (5 per 5 min)."""
+    async with _login_lock:
+        now = time.time()
+        if ip in _login_attempts:
+            _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < 300]
+        else:
+            _login_attempts[ip] = []
+        if len(_login_attempts[ip]) >= 5:
+            return False
+        _login_attempts[ip].append(now)
+        return True
+
+
+# =============================================================================
 # Auth Routes
 # =============================================================================
 @app.get("/login", response_class=HTMLResponse, tags=["auth"])
 async def login_page(r: Request):
     return templates.TemplateResponse("login.html", {"request": r})
 
+
 @app.post("/login", tags=["auth"])
-async def login_do(username: str = Form(...), password: str = Form(...)):
-    if username == ADMIN_USER and password == ADMIN_PASS:
+async def login_do(request: Request, username: str = Form(...), password: str = Form(...)):
+    # Security: Rate limit login attempts
+    client_ip = request.client.host
+    if not await check_login_rate_limit(client_ip):
+        logger.warning(f"Login rate limit exceeded for IP: {client_ip}")
+        return JSONResponse(
+            {"status": "error", "msg": "Too many login attempts. Try again later."},
+            status_code=429,
+            headers={"Retry-After": "300"}
+        )
+    
+    # Security: Input validation
+    if not username.strip() or not password.strip():
+        return JSONResponse({"status": "error", "msg": "Username and password required"}, 400)
+    
+    if username == ADMIN_USER and verify_admin_password(password):
         logger.info(f"Admin login successful for user: {username}")
         resp = JSONResponse({"status": "success"})
         resp.set_cookie("admin_token", SESSION_KEY, httponly=True, samesite="lax")
         return resp
-    logger.warning(f"Failed login attempt for user: {username}")
+    
+    logger.warning(f"Failed login attempt for user: {username} from IP: {client_ip}")
     return JSONResponse({"status": "error", "msg": "Invalid credentials"}, 401)
 
 # =============================================================================
@@ -169,23 +249,51 @@ async def index(r: Request):
         "keys": db.list_keys(),
     })
 
+# Allowed sources whitelist for validation
+ALLOWED_SOURCES = {"chatgpt", "claude", "gemini", "deepseek", "moonshot", "qwen", "minimax", "baichuan"}
+
+
+def validate_source(source: str, max_length: int = 64) -> str:
+    """Validate source parameter: non-empty, alphanumeric, max length."""
+    if not source or not source.strip():
+        raise HTTPException(400, "Source cannot be empty")
+    source = source.strip()
+    if len(source) > max_length:
+        raise HTTPException(400, f"Source too long (max {max_length} chars)")
+    # Allow only alphanumeric + underscore/dash
+    import re
+    if not re.match(r'^[a-zA-Z0-9_-]+$', source):
+        raise HTTPException(400, "Source contains invalid characters")
+    return source
+
+
 # =============================================================================
 # Pool Management
 # =============================================================================
 @app.post("/api/pool/sync", tags=["pool"])
 async def sync_pool(data: SyncData):
-    db.update_pool(data.source, data.cookies, data.tokens)
-    logger.info(f"Pool synced for source: {data.source}")
-    return {"status": "success", "msg": f"Synced {data.source}"}
+    # Security: Validate source
+    source = validate_source(data.source)
+    db.update_pool(source, data.cookies, data.tokens)
+    logger.info(f"Pool synced for source: {source}")
+    return {"status": "success", "msg": f"Synced {source}"}
+
 
 @app.delete("/api/pool/{source}", tags=["pool"])
 async def delete_pool_item(source: str, _=Depends(api_auth)):
+    source = validate_source(source)
     db.delete_pool_data(source)
     logger.info(f"Pool item deleted: {source}")
     return {"status": "success"}
 
+
 @app.post("/api/pool/update_token", tags=["pool"])
 async def update_pool_token(source: str = Form(...), token: str = Form(...), _=Depends(api_auth)):
+    # Security: Validate source and token
+    source = validate_source(source, max_length=64)
+    if not token or len(token) < 1 or len(token) > 4096:
+        raise HTTPException(400, "Token must be 1-4096 characters")
+    
     pool = db.get_pool_data(source)
     cookies = pool.get("cookies", {}) if pool else {}
     new_tokens = {}
