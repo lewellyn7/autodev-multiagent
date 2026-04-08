@@ -1,0 +1,349 @@
+"""API 路由 - 包含页面渲染和增强 API"""
+import sys
+import os,json,re,time
+from pathlib import Path
+from datetime import datetime,timedelta
+from typing import List,Dict,Optional
+from fastapi import APIRouter,Query,Body,Request
+from fastapi.responses import HTMLResponse,JSONResponse,FileResponse
+from fastapi.templating import Jinja2Templates
+from loguru import logger
+
+sys_path=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0,sys_path)
+from app.database import get_db
+from app.utils.tfidf_matcher import TFIDFMatcher
+from app.utils.notifications import get_notif_manager
+from app.utils.pdf_generator import get_pdf_generator
+
+router=APIRouter()
+_templates=Jinja2Templates(directory=str(Path(__file__).parent.parent/"templates"))
+
+_cache={"projects":[],"total":0,"last_load":0}
+
+def _load_projects():
+    now=time.time()
+    if _cache["projects"] and(now-_cache["last_load"])<60:
+        return _cache["projects"],_cache["total"]
+    data_file=Path(sys_path)/"output"/"latest.json"
+    if data_file.exists():
+        try:
+            with open(data_file,encoding="utf-8")as f:d=json.load(f)
+            _cache["projects"]=d.get("projects",[]);_cache["total"]=d.get("total",0);_cache["last_load"]=now
+            return _cache["projects"],_cache["total"]
+        except:pass
+    return [],0
+
+def _clear_cache():_cache["projects"]=[];_cache["last_load"]=0
+
+# ========== 页面渲染 ==========
+@router.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    db=get_db();projects,total=_load_projects()
+    std={"total":total,"last_run":"-","matched":len([p for p in projects if p.get("keywords_matched")])}
+    if(Path(sys_path)/"output"/"latest.json").exists():
+        try:
+            with open(Path(sys_path)/"output"/"latest.json",encoding="utf-8")as f:d=json.load(f);std["last_run"]=d.get("last_run","-")
+        except:pass
+    std["db_stats"]=db.get_stats()
+    return _templates.TemplateResponse(request, "dashboard.html", {"request":request,"stats":std})
+
+@router.get("/content", response_class=HTMLResponse)
+async def get_content(request: Request):
+    return _templates.TemplateResponse(request, "data.html", {"request":request})
+
+@router.get("/data", response_class=HTMLResponse)
+async def get_data(request: Request):
+    return _templates.TemplateResponse(request, "settings.html", {"request":request})
+
+@router.get("/settings", response_class=HTMLResponse)
+async def get_settings_page(request: Request):
+    return _templates.TemplateResponse(request, "settings.html", {"request":request})
+
+@router.get("/favorites", response_class=HTMLResponse)
+async def get_favorites(request: Request):
+    return _templates.TemplateResponse(request, "favorites.html", {"request":request})
+
+@router.get("/analytics", response_class=HTMLResponse)
+async def get_analytics_page(request: Request):
+    return _templates.TemplateResponse(request, "analytics.html", {"request":request})
+
+@router.get("/logs", response_class=HTMLResponse)
+async def get_logs_page(request: Request):
+    return _templates.TemplateResponse(request, "logs.html", {"request":request})
+
+"""API 路由增强版 - Part 1"""
+import os,json,re,time
+from pathlib import Path
+from datetime import datetime,timedelta
+from typing import List,Dict
+# (deduped imports + cache)
+
+
+@router.get("/api/projects")
+def get_projects(page:int=Query(1,ge=1),page_size:int=Query(20,ge=1,le=100),keyword:str=Query(""),category:str=Query(""),date_start:str=Query(""),date_end:str=Query(""),status:str=Query(""),preset_key:str=Query(""),source:str=Query(""),sort_by:str=Query("date"),use_tfidf:bool=Query(False)):
+    db=get_db();projects,_=_load_projects()
+    if preset_key:
+        p=db.get_preset(preset_key)
+        if p:
+            fc=p.get("filter_config",{})
+            keyword=keyword or fc.get("keyword","");category=category or fc.get("category","")
+            date_start=date_start or fc.get("date_start","");date_end=date_end or fc.get("date_end","")
+    filtered=projects
+    if keyword:
+        if use_tfidf:
+            m=TFIDFMatcher();m.build_corpus([p.get("title","")for p in projects])
+            kws=[k.strip()for k in keyword.split(",")if k.strip()];m.build_keywords(kws)
+            mu=set()
+            for p in projects:
+                _,matched,_=m.match(p.get("title",""),kws)
+                if matched:mu.add(p.get("url",""))
+            filtered=[p for p in projects if p.get("url","")in mu]
+        else:
+            kws=[k.strip().lower()for k in keyword.split(",")if k.strip()]
+            filtered=[p for p in projects if any(kw in p.get("title","").lower()for kw in kws)or any(kw in p.get("content_preview","").lower()for kw in kws)]
+    if category:filtered=[p for p in filtered if p.get("tender_type")==category or p.get("type")==category]
+    if date_start:filtered=[p for p in filtered if p.get("publish_date","")>=date_start]
+    if date_end:filtered=[p for p in filtered if p.get("publish_date","")<=date_end]
+    if source:filtered=[p for p in filtered if source in p.get("source_url","")]
+    if sort_by=="budget":
+        def bnum(p):
+            b=p.get("budget","")
+            try:return float(re.sub(r"[^\d.]","",b))*(10000 if "万"in b else 1)
+            except:return 0
+        filtered.sort(key=bnum,reverse=True)
+    else:filtered.sort(key=lambda p:p.get("publish_date","")or"",reverse=True)
+    total_f=len(filtered);start=(page-1)*page_size;page_projects=filtered[start:start+page_size]
+    for p in page_projects:
+        p["is_favorite"]=db.is_favorite(p.get("url",""))
+        p["annotation"]=db.get_annotation(p.get("url",""))
+    data_file=Path(sys_path)/"output"/"latest.json";last_run="-"
+    if data_file.exists():
+        try:
+            with open(data_file,encoding="utf-8")as f:d=json.load(f);last_run=d.get("last_run","-")
+        except:pass
+    return JSONResponse({"data":page_projects,"total":total_f,"page":page,"page_size":page_size,"last_run":last_run})
+
+@router.get("/api/project/{project_url}")
+def get_project(project_url):
+    db=get_db();projects,_=_load_projects()
+    for p in projects:
+        if p.get("url","")==project_url:
+            p["is_favorite"]=db.is_favorite(project_url)
+            p["annotation"]=db.get_annotation(project_url)
+            return JSONResponse(p)
+    return JSONResponse({"error":"not found"},status_code=404)
+@router.post("/api/favorites")
+def add_favorite(project:Dict=Body(...)):
+    get_db().add_favorite(project);return {"success":True}
+@router.delete("/api/favorites/{project_url}")
+def remove_favorite(project_url):
+    get_db().remove_favorite(project_url);return {"success":True}
+@router.get("/api/favorites")
+def list_favorites(status:str=Query("")):
+    db=get_db();favs=db.get_favorites(status if status else None)
+    anns={a["project_url"]:a for a in db.get_all_annotations()}
+    for f in favs:f["annotation"]=anns.get(f.get("project_url",""))
+    return JSONResponse({"favorites":favs,"total":len(favs)})
+@router.patch("/api/favorites/{project_url}")
+def update_favorite_status(project_url,status:str=Body(...)):
+    get_db().update_favorite_status(project_url,status);return {"success":True}
+@router.post("/api/annotations")
+def save_annotation(data:Dict=Body(...)):
+    db=get_db()
+    db.add_annotation(project_url=data.get("project_url",""),note=data.get("note",""),priority=data.get("priority","normal"),tags=data.get("tags",[]))
+    return {"success":True}
+@router.get("/api/annotations/{project_url}")
+def get_annotation(project_url):
+    ann=get_db().get_annotation(project_url);return JSONResponse(ann or{})
+@router.get("/api/annotations")
+def list_annotations():
+    return JSONResponse({"annotations":get_db().get_all_annotations()})
+@router.post("/api/presets")
+def save_preset(data:Dict=Body(...)):
+    db=get_db()
+    db.save_preset(name=data.get("name",""),preset_key=data.get("preset_key",""),filter_config=data.get("filter_config",{}),is_default=data.get("is_default",False))
+    return {"success":True}
+@router.get("/api/presets")
+def list_presets():
+    return JSONResponse({"presets":get_db().get_presets()})
+@router.delete("/api/presets/{preset_key}")
+def delete_preset(preset_key):
+    get_db().delete_preset(preset_key);return {"success":True}
+
+@router.get("/api/duplicates")
+def find_duplicates(threshold:float=Query(0.7,ge=0,le=1)):
+    db=get_db();projects,_=_load_projects()
+    if not projects:return JSONResponse({"duplicates":[],"total":0})
+    m=TFIDFMatcher(min_similarity=threshold);m.build_corpus([p.get("title","")for p in projects])
+    groups=[];checked=set()
+    for i,p1 in enumerate(projects):
+        u1=p1.get("url","")
+        if u1 in checked:continue
+        group=[{"url":u1,"title":p1.get("title",""),"similarity":1.0}]
+        for j,p2 in enumerate(projects[i+1:],i+1):
+            u2=p2.get("url","")
+            if u2 in checked:continue
+            sim=m.title_similarity(p1.get("title",""),p2.get("title",""))
+            if sim>=threshold:
+                group.append({"url":u2,"title":p2.get("title",""),"similarity":round(sim,3)});checked.add(u2)
+                db.add_duplicate(u1,u2,p2.get("title",""),sim)
+        if len(group)>1:
+            groups.append(group)
+            for item in group:checked.add(item["url"])
+    return JSONResponse({"duplicates":groups,"total":len(groups)})
+@router.get("/api/analytics")
+def get_analytics(days:int=Query(30,ge=1,le=365)):
+    projects,_=_load_projects()
+    if not projects:return JSONResponse({"trend":{},"budget_dist":{},"keyword_heat":{},"source_dist":{}})
+    cutoff=(datetime.now()-timedelta(days=days)).strftime("%Y-%m-%d")
+    recent=[p for p in projects if p.get("publish_date","")>=cutoff]
+    trend={}
+    for p in recent:
+        d=p.get("publish_date","")[:10]
+        if not d:continue
+        trend[d]=trend.get(d,{"total":0,"gov":0,"eng":0});trend[d]["total"]+=1
+        t=p.get("tender_type","")
+        if "政府"in t:trend[d]["gov"]+=1
+        elif "工程"in t:trend[d]["eng"]+=1
+    br={"0-10万":0,"10-50万":0,"50-100万":0,"100-500万":0,"500万+":0}
+    for p in recent:
+        b=p.get("budget","")
+        if not b:continue
+        try:
+            n=float(re.sub(r"[^\d.]","",b))*(10000 if "万"in b else 1)
+            if n<100000:br["0-10万"]+=1
+            elif n<500000:br["10-50万"]+=1
+            elif n<1000000:br["50-100万"]+=1
+            elif n<5000000:br["100-500万"]+=1
+            else:br["500万+"]+=1
+        except:pass
+    kwc={}
+    for p in recent:
+        kw=p.get("keywords_matched","")
+        if kw:
+            for k in kw.split(","):
+                k=k.strip()
+                if k:kwc[k]=kwc.get(k,0)+1
+    kwh=dict(sorted(kwc.items(),key=lambda x:x[1],reverse=True)[:20])
+    sd={}
+    for p in recent:
+        try:
+            src=p.get("source_url","")or p.get("url","")
+            src=src.split("/")[2]if "//"in src else src[:30]
+            sd[src]=sd.get(src,0)+1
+        except:pass
+    return JSONResponse({"trend":trend,"budget_dist":br,"keyword_heat":kwh,"source_dist":dict(sorted(sd.items(),key=lambda x:x[1],reverse=True)[:10]),"total_count":len(recent),"days":days})
+@router.get("/api/logs")
+def get_logs(level:str=Query(""),limit:int=Query(200,ge=1,le=500)):
+    return JSONResponse({"logs":get_db().get_logs(level if level else None,limit)})
+@router.delete("/api/logs")
+def clear_logs(before_days:int=Query(7,ge=1)):
+    get_db().clear_logs(before_days);return {"success":True}
+@router.post("/api/config/backup")
+def backup_config(data:Dict=Body(...)):
+    db=get_db();db.backup_config(version_label=data.get("version_label",""),config_data=data.get("config_data",{}),description=data.get("description",""));return {"success":True}
+@router.get("/api/config/backups")
+def list_backups(limit:int=Query(10,ge=1,le=50)):
+    backups=get_db().get_config_backups(limit)
+    for b in backups:b.pop("config_data",None)
+    return JSONResponse({"backups":backups})
+@router.post("/api/config/restore/{backup_id}")
+def restore_backup(backup_id):
+    b=get_db().restore_config(backup_id)
+    if not b:return JSONResponse({"error":"backup not found"},status_code=404)
+    return JSONResponse({"backup":b})
+
+def _do_export(projects,segment_by):
+    from app.utils.report import ReportGenerator
+    gen=ReportGenerator(str(Path(sys_path)/"output"))
+    std=[{"title":p.get("title",""),"type":p.get("tender_type",p.get("type","")),"publish_date":p.get("publish_date",""),"budget":p.get("budget",""),"url":p.get("url",""),"source_url":p.get("source_url",""),"keywords_matched":p.get("keywords_matched",""),"contact_name":p.get("contact_name",""),"contact_phone":p.get("contact_phone","")}for p in projects]
+    if segment_by=="date":
+        by={}
+        for p in projects:d=p.get("publish_date","未知")[:10];by.setdefault(d,[]).append(p)
+        files=[]
+        for k,items in by.items():
+            sp=[{"title":i.get("title",""),"type":i.get("tender_type",""),"publish_date":i.get("publish_date",""),"budget":i.get("budget",""),"url":i.get("url",""),"source_url":i.get("source_url",""),"keywords_matched":i.get("keywords_matched","")}for i in items]
+            f2=gen.generate_excel(sp,f"export_{k}")
+            if f2:files.append({"key":k,"file":f2,"count":len(items)})
+        return JSONResponse({"files":files,"segments":len(files)})
+    elif segment_by=="type":
+        by={}
+        for p in projects:t=p.get("tender_type",p.get("type","未知"));by.setdefault(t,[]).append(p)
+        files=[]
+        for k,items in by.items():
+            sp=[{"title":i.get("title",""),"type":i.get("tender_type",""),"publish_date":i.get("publish_date",""),"budget":i.get("budget",""),"url":i.get("url",""),"source_url":i.get("source_url",""),"keywords_matched":i.get("keywords_matched","")}for i in items]
+            f2=gen.generate_excel(sp,f"export_{k}")
+            if f2:files.append({"key":k,"file":f2,"count":len(items)})
+        return JSONResponse({"files":files,"segments":len(files)})
+    else:
+        f2=gen.generate_excel(std,"export");return JSONResponse({"file":f2,"count":len(projects)})
+@router.get("/api/export/excel")
+def export_excel(keyword:str=Query(""),category:str=Query(""),date_start:str=Query(""),date_end:str=Query(""),segment_by:str=Query("")):
+    projects,_=_load_projects()
+    if keyword:
+        kws=[k.strip().lower()for k in keyword.split(",")if k.strip()]
+        projects=[p for p in projects if any(kw in p.get("title","").lower()for kw in kws)]
+    if category:projects=[p for p in projects if p.get("tender_type")==category or p.get("type")==category]
+    if date_start:projects=[p for p in projects if p.get("publish_date","")>=date_start]
+    if date_end:projects=[p for p in projects if p.get("publish_date","")<=date_end]
+    return _do_export(projects,segment_by)
+@router.get("/api/export/pdf")
+def export_pdf(keyword:str=Query(""),category:str=Query(""),date_start:str=Query(""),date_end:str=Query(""),segment_by:str=Query("")):
+    projects,_=_load_projects()
+    if keyword:
+        kws=[k.strip().lower()for k in keyword.split(",")if k.strip()]
+        projects=[p for p in projects if any(kw in p.get("title","").lower()for kw in kws)]
+    if category:projects=[p for p in projects if p.get("tender_type")==category or p.get("type")==category]
+    if date_start:projects=[p for p in projects if p.get("publish_date","")>=date_start]
+    if date_end:projects=[p for p in projects if p.get("publish_date","")<=date_end]
+    g=get_pdf_generator()
+    if not g.available:return JSONResponse({"error":"PDF not available"},status_code=503)
+    if segment_by:
+        files=g.generate_segmented(projects,segment_by);return JSONResponse({"files":files,"count":len(files)})
+    else:
+        f=g.generate_report(projects)
+        if f:return JSONResponse({"file":f,"count":len(projects)})
+        return JSONResponse({"error":"PDF generation failed"},status_code=500)
+@router.get("/api/notifications/config")
+def get_notif_config():return JSONResponse(get_notif_manager().get_config())
+@router.post("/api/notifications/config")
+def update_notif_config(enabled:bool=Body(False),bot_token:str=Body(""),chat_id:str=Body(""),min_budget:str=Body(""),keywords_filter:List=Body([]),notify_on_count:int=Body(1)):
+    nm=get_notif_manager()
+    nm.update_config(enabled=enabled,bot_token=bot_token,chat_id=chat_id,min_budget=min_budget,keywords_filter=keywords_filter,notify_on_count=notify_on_count)
+    return {"success":True}
+@router.post("/api/notifications/test")
+async def test_notification():
+    nm=get_notif_manager()
+    if not nm.config.enabled:return JSONResponse({"error":"not enabled"},status_code=400)
+    ok=await nm.send_immediate({"title":"Test","url":"https://example.com","tender_type":"Test","budget":"100万","keywords_matched":"test","submission_deadline":"2026-04-30"})
+    return {"success":ok}
+@router.get("/api/stats")
+def get_stats():
+    db=get_db();projects,total=_load_projects()
+    data_file=Path(sys_path)/"output"/"latest.json";last_run="-"
+    if data_file.exists():
+        try:
+            with open(data_file,encoding="utf-8")as f:d=json.load(f);last_run=d.get("last_run","-")
+        except:pass
+    return JSONResponse({"total":total,"filtered":len([p for p in projects if p.get("keywords_matched")]),"last_run":last_run,"db_stats":db.get_stats()})
+SETTINGS_FILE=Path(sys_path)/"config"/"settings.json"
+@router.get("/api/settings")
+def get_settings():
+    if SETTINGS_FILE.exists():
+        try:
+            with open(SETTINGS_FILE,encoding="utf-8")as f:return JSONResponse(json.load(f))
+        except:pass
+    return JSONResponse({"tasks":[],"schedule":{},"config":{}})
+@router.post("/api/settings")
+def save_settings(data:Dict=Body(...)):
+    try:
+        with open(SETTINGS_FILE,"w",encoding="utf-8")as f:json.dump(data,f,ensure_ascii=False,indent=2)
+        _clear_cache();return {"success":True}
+    except Exception as e:return JSONResponse({"success":False,"error":str(e)},status_code=500)
+@router.post("/api/collect")
+async def trigger_collection():
+    _clear_cache()
+    try:
+        from main import run_collection;result=await run_collection();return JSONResponse({"success":True,"result":result})
+    except Exception as e:logger.error(f"Collection failed:{e}");return JSONResponse({"success":False,"error":str(e)},status_code=500)
