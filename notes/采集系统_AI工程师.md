@@ -56,6 +56,30 @@
 5. **无预测性告警** — 截标日期临近时无主动提醒
 6. **数据沉睡** — 历史数据无法被语义检索（pgvector 未充分利用）
 
+## 开发进度
+
+### ✅ 已完成 (2026-04-18/19)
+- **向量入库**: main.py 采集完成后自动 `_upsert_to_vector_store()` (2026-04-19 commit)
+- **ChromaDB 持久化**: `VECTOR_STORE_BACKEND=chromadb`，数据存 scraper-data volume (2026-04-19)
+- **向量搜索默认化**: `use_vector=True` 默认，失败自动回退 TF-IDF → 简单匹配
+- **projects.py API**: 支持 `use_vector` / `use_tfidf` 双参数
+- **Embedding 预热**: `@app.on_event("startup")` 后台线程预热模型
+- **/health 增强**: 返回向量库 backend/embedding_model/total_vectors
+
+### ✅ 已完成 (2026-04-21)
+- **SemanticTenderFilter**: 新增基于 vLLM Qwen3-Embedding-4B 的语义过滤（阈值0.60，批量32）
+- **全量向量入库脚本**: `scripts/backfill_vectors.py` 将 favorites 历史数据批量向量化写入 ChromaDB
+- **Embedding 批量接口**: MiniMaxService 新增 embed_text/embed_texts
+- **截标日期 T-3 提醒**: NotificationManager.check_deadline_alerts(days=3) 采集完成后自动触发
+
+### ⚠️ 待处理
+- **首次采集语义召回率为0**: 运行 `python scripts/backfill_vectors.py --dry-run` 预览，再去掉 --dry-run 正式填充
+- **pgvector SQL 直接使用** (可选): ChromaDB 当前可用，pgvector SQL 后端待实现
+
+**进度: 92%**
+
+---
+
 ## 改进建议
 
 ### 高优先级
