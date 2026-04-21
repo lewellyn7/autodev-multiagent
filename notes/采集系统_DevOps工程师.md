@@ -254,7 +254,17 @@ http://localhost:3002
 9. **健康检查轮询次数**：60s 对 Playwright 冷启动偏短
 10. **无 CI 测试阶段**：`deploy.sh` 直接 pull + up
 
-**进度: 94%**
+### ✅ 已完成 (2026-04-21)
+- **Docker Secrets 生产配置** (1fa1cad)
+  - `secrets/` 目录（已 gitignore）：8 个 secret 占位文件
+  - `secrets/.env`：env_file 格式
+  - `secrets/README.md`：创建说明
+  - `docker-compose.prod.yml`：top-level `secrets:` + 所有服务添加 `env_file`
+  - 修复 `postgres-data` volume 缺失
+- **Settings 页面信息架构** (b183ddb): 11 tab → 5 分组 (采集/数据/AI/系统/账户)
+- **移动端表格适配** (b183ddb): 固定列宽 + truncate
+
+**进度: 98%**
 
 ---
 
