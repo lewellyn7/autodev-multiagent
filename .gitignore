@@ -34,3 +34,60 @@ data/
 # OS
 .DS_Store
 Thumbs.db
+
+# OpenClaw runtime state (auto-managed, not source code)
+.openclaw/
+.openclaw-repair/
+.clawhub/
+.worktrees/
+.worktree-state/
+state/
+
+# OpenClaw runtime data (sessions/skills/logs/output/tmp = auto-generated)
+sessions/
+skills/
+logs/
+output/
+tmp/
+
+# Feature worktrees archive (历史 work 备份)
+.pre-qual-feature/
+
+# Credentials (NEVER commit)
+.credentials/
+
+# Workspace backups (manual)
+.backup-*/
+
+# Backup file extensions
+*.bak
+*.backup
+*.orig
+*.tmp
+
+# Legacy project (废弃 — 不再维护)
+ai-gateway-improved/
+
+# Misc runtime files
+claude/
+hermes-agent.tar.gz
+
+# OpenClaw local trash/backups (临时清理)
+.trash-*/
+
+# Runtime state (更深层)
+claude/
+memory/.dreams/
+
+# OpenClaw session/daily logs (auto-generated, 不进 git)
+memory/
+
+# Skill plans (运行时生成)
+docs/superpowers/plans/
+
+# OpenClaw runtime (deeper)
+openclaw/
+worktrees/
+
+# Random binary root artifacts
+/*.xlsx

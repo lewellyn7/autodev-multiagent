@@ -362,3 +362,73 @@ git add -A && git commit -m "..."
 3. `cron get <id>` 独立 verify `fallbacks = ['m1','m2','m3']` (Python list, 不是 string-of-list)
 
 **lesson 14 增订:** lesson 14 只说 "patch REPLACE not MERGE"，没提 CLI 参数格式坑 — lesson 15 补齐。
+
+## 16. cron runs --limit N 排序不保证最新 (2026-07-16, 06:14)
+
+**事件:** verify 3845a680 / 2005eeb0 昨晚是否成功时，第一轮 `cron runs --id 2005eeb0 --limit 50` 返回的"最新"是 **2026-06-04 21:00**（42 天前），差点误判 silent-killer（以为 cron 没跑 / run history 被清空）。
+
+**真相:** 改 `cron runs --id <id> --limit 3` + grep `runAtIso` 才看到真实昨晚记录（2026-07-15 21:00:02.006, status ok, model M2.7, fallbackUsed false）。
+
+**坑点:**
+- `cron runs --limit N` 返回的 N 条**不保证是最新 N 条** — OpenClaw runtime 2026.7.1 实测返回**最早** N 条（按时间正序）
+- 看到 "old date" 不能直接断定 silent-killer — 必须交叉 verify
+- silent-killer 误判会让 user 多余 work（已修好 fallback 又被怀疑没修 → 二次修复浪费时间）
+
+**规则:**
+1. **永远用 `cron runs --id <id> --limit 3` + grep `runAtIso` 作为 first-step** — 不直接用 limit=50/100
+2. **silent-killer 警报前必须交叉验证** — 至少 2 个独立数据点：
+   - `cron list` 的 `Xh ago` 字段（调度器视角）
+   - `cron runs` 的 `runAtIso`（实际 run history）
+3. **看到旧日期不要立刻拍结论** — 先验证排序逻辑
+
+**修复路径:**
+1. `cron runs --id <id> --limit 3` — 看最新 3 条
+2. `grep runAtIso` 找真实最新日期
+3. 跟 `cron list` 的 `Xh ago` 字段交叉验证
+4. 两者一致才下结论
+
+**lesson 7 增订:** lesson 7 silent-killer 审计 routine 只说 "核心模块改动必须 verify + `return []` / `return None` 路径审计"，没提 **数据排序陷阱** — lesson 16 补齐。
+
+## 17. `git checkout HEAD -- <file>` 之前永远先 diff (2026-07-16, 09:30)
+
+**事件:** C-1.3 处理 M 文件时按 plan "3 runtime checkout HEAD" 执行 `git checkout HEAD -- .clawhub/lock.json .openclaw/workspace-state-state.json .github/workflows/ci.yml`。**几乎误删 ci.yml** — diff 显示它有真用户修改:
+- `branches: [main, develop]` (加 develop 触发)
+- `release: types: [published]` (加 release event)
+- 移除 `PYTHON_VERSION: '3.11'` env
+- 重构 jobs (`test` → `lint`, 删 PYTHON_VERSION, 加 release job)
+
+**恢复路径:** 因为 Step 1 backup 把 ci.yml modified 备份到 `.backup-2026-07-16-pre-c1/ci.yml.before-checkout` (159 lines) → 立刻 `cp` 还原 → M 状态恢复 → 重新 `git add` → 上线。
+
+**坑点:**
+- `git checkout HEAD -- <file>` 是**不可逆 destructive** — working tree 修改丢失 (除非 stage)
+- `.gitignore` / `.github/workflows/*` / `*.config` 等文件**不是 runtime state**，可能是用户真配置
+- 默认假设 M = runtime 是错的 — 必须先 diff
+
+**规则:**
+1. **`git checkout HEAD -- <file>` 之前永远先 `git diff <file> | head -30` 看内容**
+2. **如果 diff 显示用户实质修改 (新字段/新触发/重构)**: NOT runtime — 用 `git add` 保留
+3. **如果 diff 是空白 / 自动生成标记**: 可能是 runtime — checkout HEAD
+4. **核心模块配置文件永远不 checkout HEAD** — 包括 `.github/workflows/*`, `*.config`, `requirements.txt`, `pyproject.toml`, `Dockerfile`, `docker-compose.yaml` 等
+5. **destructive 命令前先 cp 备份** — 哪怕只是 one-line `cp file .backup/file.before-op`
+
+**lesson 13 增订:** lesson 13 (silent-killer 误判陷阱) 只说 "看到旧数据先验证排序"，没提 **destructive 命令的 reverse 风险** — lesson 17 补齐。
+
+---
+
+**C-1 结果（2026-07-16, 09:34）:**
+
+**修复统计:**
+- 533 unstaged → 1 untracked (claude/)
+- D 251 → 0
+- M 11 → 0
+- ?? 732 → 1
+- Staged 105: 56 sessions (删) + 34 ai-gateway-improved (删) + 5 采集系统 notes + 2 memory + lessons-learned + .gitignore + ci.yml + .env.sample + 4 新 notes
+- Trash: 9 temp files + tmp/ → `.trash-2026-07-16-c1/`
+
+**关键教训:**
+1. 8 docs M 修正 → 实际在 D (审计误判，lesson 13 关联)
+2. ci.yml 不是 runtime (lesson 17)
+3. notes/后端架构.md 不存在 → 后端架构**师**.md (文件名错)
+4. memory/ 318 文件 → .gitignore 化
+5. sessions/ + ai-gateway-improved/ → `git rm --cached` + .gitignore
+6. trash 不可用 → 用 `mkdir .trash-* + mv`
