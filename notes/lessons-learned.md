@@ -652,3 +652,31 @@ host all all all scram-sha-256
 ### 关联 lesson
 - lesson 7+: silent-killer 警报**持续命中** (DB 完整性 + audit 数字一致性 + 孤儿 init 是同一类陷阱)
 - lesson 19: lesson 19 fix 间接暴露此 bug — **fix 的连锁价值得到验证**
+
+## 23. middleware 签名容器-本地漂移 silent-killer (2026-07-17, 14:14)
+
+**事件**: 77d7aac hot-deploy 后 web 全 500, 报 `TypeError: RateLimitMiddleware.__init__() got an unexpected keyword argument 'max_per_minute'`
+
+### Root cause
+- container `/app/app/middleware/security.py` 用新签名 `__init__(app, max_per_minute_guest=500, max_per_minute_user=1000)`
+- local `app/middleware/security.py` 旧版 `__init__(app, max_per_minute=100)`
+- 容器一直跑正常是因为**容器内的 web_server.py 也是用 guest/user 参数**（与新 middleware 匹配）
+- 我 `docker cp` 本地 web_server.py（commit 77d7aac 的版本，`max_per_minute=100`）→ **触发 TypeError，所有路由 500**
+
+### 修复
+1. **sync container security.py → local** (`md5 803e1d32, 153 行`)
+2. **改 web_server.py**: `max_per_minute=100` → `max_per_minute_guest=500, max_per_minute_user=1000`
+3. docker cp + restart + **smoke verify (lesson 7+ 强制)**
+
+### lesson 7+ 第 7 次命中 (新增子规则)
+- hot-deploy 前必须 `docker exec <container> md5sum <file>` 对比 local md5
+- **middleware / 配置 / 路由等容器代码也要核对**（不只是业务代码）
+- 关键差异列: middleware 签名, route prefix, env var, dep version
+- **docker cp + restart 之后必须立即 smoke verify** (GET /health), 不能"重启成功 = 完成"
+
+### 关联
+- 触发链: lesson 19 fix → smoke 2 暴露 harvest_records 表不存在 → Step 1+2 → commit 77d7aac → hot-deploy → silent-killer #7
+- **修的连锁价值**: lesson 19 fix 间接暴露 silent-killer #22 + #23
+
+### 回滚
+- `git revert 77d7aac` + 新 middleware fix revert
