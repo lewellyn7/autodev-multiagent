@@ -25,7 +25,7 @@ async def main():
         host="postgres",
         port=5432,
         user="root",
-        password="***",
+        password="root123",
         database="tender_scraper",
     )
     cur = conn.cursor()
