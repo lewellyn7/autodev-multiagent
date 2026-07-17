@@ -5,6 +5,7 @@ PostgreSQL 数据模型 — asyncpg 连接池 + CRUD
 """
 
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -12,6 +13,10 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 import asyncpg
+
+# ── Logger ─────────────────────────────────────────────
+logger = logging.getLogger(__name__)
+
 
 # ── 配置 ────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
@@ -630,23 +635,36 @@ async def save_harvest_records(
     """
     批量保存采集记录（自动去重）。
     返回 (插入数, 更新数)。
+
+    Bug 1 修复 (lesson 19/20 silent-killer, 2026-07-17):
+    - 之前: 整个 loop 一个 tx, 单条失败 → 整个 tx abort → 静默丢全部数据
+    - 现在: 每条独立 tx + try/except, 单条失败只影响自己, 其他正常入库
     """
     inserted = updated = 0
-    async with DatabaseManager.transaction() as conn:
-        for r in records:
-            _, is_new = await HarvestRecord.upsert_by_url(
-                conn,
-                title=r.get("title", ""),
-                source_url=r.get("url", ""),
-                source_name=source_name,
-                publish_date=r.get("date"),
-                matched_keywords=r.get("matched_keywords"),
-                raw_data=r.get("raw_data"),
+    for r in records:
+        try:
+            async with DatabaseManager.transaction() as conn:
+                _, is_new = await HarvestRecord.upsert_by_url(
+                    conn,
+                    title=r.get("title", ""),
+                    source_url=r.get("url", ""),
+                    source_name=source_name,
+                    publish_date=r.get("date"),
+                    matched_keywords=r.get("matched_keywords"),
+                    raw_data=r.get("raw_data"),
+                )
+                if is_new:
+                    inserted += 1
+                else:
+                    updated += 1
+        except Exception as e:
+            # lesson 19: 静默 tx aborted silent-killer → 单条失败不影响其他记录
+            logger.warning(
+                f"⚠️ save_harvest_records 单条失败 "
+                f"(source={source_name}, url={r.get('url', '?')[:100]}): "
+                f"{type(e).__name__}: {e}"
             )
-            if is_new:
-                inserted += 1
-            else:
-                updated += 1
+            continue
     return inserted, updated
 
 
