@@ -1,6 +1,7 @@
 """Web 管理界面服务器"""
 import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from loguru import logger
@@ -21,6 +22,7 @@ from app.api.metrics import router as metrics_router
 from app.api.routes import api_router
 from app.api.routes.document_upload import router as document_upload_router
 from app.api.routes.pages import router as pages_router
+from app.database.async_models import DatabaseManager, init_tables
 from app.middleware.csrf import CSRFProtectionMiddleware
 from app.middleware.security import (
     RateLimitMiddleware,
@@ -32,8 +34,27 @@ from app.middleware.security import (
 logger.remove()
 logger.add(sys.stderr, level=LOG_LEVEL)
 
+
+# ── 生命周期：启动 init tables, 关闭关连接池 ─────
+# lesson 22: 修 harvest_records 孤儿 lifespan silent-killer
+@asynccontextmanager
+async def lifespan(app):
+    """启动时自动建缺失表 (init_tables 幂等), 关闭时清理连接池"""
+    try:
+        await init_tables()
+        logger.info("✅ DB tables initialized (lifespan startup)")
+    except Exception as e:
+        logger.warning(f"⚠️ DB init 警告 (lifespan startup): {e}")
+    yield
+    try:
+        await DatabaseManager.close_pool()
+        logger.info("DB 连接池已关闭 (lifespan shutdown)")
+    except Exception as e:
+        logger.warning(f"⚠️ DB close 警告 (lifespan shutdown): {e}")
+
+
 # 创建 FastAPI 应用
-app = FastAPI(title="招投标采集系统", version="3.1")
+app = FastAPI(title="招投标采集系统", version="3.1", lifespan=lifespan)
 
 # 检测是否为生产模式
 is_production = os.getenv("ENV", "development") == "production"

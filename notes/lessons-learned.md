@@ -624,3 +624,31 @@ host all all all scram-sha-256
 **关联**:
 - `scripts/validate_cqggzy_urls.py` 当前依赖 host 端 password，需用户拍板 A/B 方案
 - commit 1 (validate 脚本 + lesson 19/20/21) **等用户拍板**才 commit
+
+## 22. harvest_records 表 + 孤儿 lifespan silent-killer (2026-07-17, 13:32)
+
+**事件**: smoke 2 verify 暴露 harvest_records 表不存在 → 所有 save_harvest_records 调用 silent fail
+
+### Root cause (双层 silent-killer)
+1. **DB 层**: `harvest_records` + `source_configs` 表自部署以来**从未创建**
+2. **代码层**: `app/api/harvest_api.py:335-370` 定义了 lifespan + `await init_tables()` 但:
+   - 这个 lifespan 在 `harvest_api.py` 自己的孤儿 FastAPI app 里 (`app = FastAPI(lifespan=lifespan)`)
+   - 孤儿 app 从未被 import/run (`grep "harvest_api:app\|uvicorn.*harvest_api"` = 0 结果)
+   - `web_server.py:36` 主 app **没传 lifespan**
+3. **触发链**: 每次 save_harvest_records 调用 → `UndefinedTableError: relation "harvest_records" does not exist` → 被外层 try/except 吞掉 → silent fail
+4. **历史影响**: 自部署以来所有 crawl history 数据全部漏存 (lesson 18 的"179 条被吞"也是同类机制)
+
+### Fix (2 步)
+- **Step 1 (热修)**: 手动 psql 跑 INIT_TABLES_SQL 建表 (commit 2351d48 后 hot-fix, 不入 git)
+- **Step 2 (根因修)**: web_server.py 加 lifespan → startup 时 init_tables() 幂等调用
+
+### 教训 (lesson 7+ 第 6 次命中)
+- **孤儿 init 模式**: "模块定义了 init 函数 + lifespan，但 lifespan 挂错了 app 对象" 是高发 silent-killer
+- **DB 表创建责任不清**: 老的 `db.py:_init_tables()` 只建 `projects` 表，新 `async_models.py:init_tables()` 建 `harvest_records` — 两套 init 系统**解耦**，老 init 跑了，新 init 没跑
+- **smoke verify 价值**: lesson 19 fix 直接暴露此 bug，没 smoke verify 永远不会发现 → **fix 的连锁价值**
+- **修法原则**: Step 1 (热修立刻 unblock) + Step 2 (根因修防止再发) **必须配套**
+- **检测**: `grep -rn "lifespan\|init_tables" --include="*.py"` + 检查每个 lifespan 是否真的会被运行
+
+### 关联 lesson
+- lesson 7+: silent-killer 警报**持续命中** (DB 完整性 + audit 数字一致性 + 孤儿 init 是同一类陷阱)
+- lesson 19: lesson 19 fix 间接暴露此 bug — **fix 的连锁价值得到验证**
