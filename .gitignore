@@ -91,3 +91,7 @@ worktrees/
 
 # Random binary root artifacts
 /*.xlsx
+
+# OpenClaw runtime artifacts (7-19 cleanup)
+DREAMS.md
+openclaw-workspace-state.json

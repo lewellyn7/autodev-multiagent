@@ -146,49 +146,6 @@ python3 scripts/backfill_project_types.py  # 全量 ~30-60s
 - 分支: `feat/bid-analysis-by-type-etl` / `feat/bid-analysis-by-type-ui`
 - PR: #28 (ETL) / #29 (UI)
 
-## Promoted From Short-Term Memory (2026-07-13)
-
-<!-- openclaw-memory-promotion:memory:memory/2026-07-06.md:43:45 -->
-- 执行 (AGENTS.md 铁律 4 步全走): `af0f52b`: API + 注册 (ccgp_intent.py + pages.py + __init__.py) — +228 行; `7b2edb7`: UI (ccgp_intent.html + base.html nav) — +350 行; 累计: 5 个文件, +578/-0 [score=0.834 recalls=0 avg=0.620 source=memory/2026-07-06.md:43-45]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-06.md:48:51 -->
-- 执行 (AGENTS.md 铁律 4 步全走): ✓ `/api/ccgp_intent/health` → 1195 条, 1000 意向 + 195 调查; ✓ `/api/ccgp_intent/stats` → by_info_type + by_date (30 天) + range; ✓ `?info_type=采购意向` → total=1000; ✓ `?info_type=需求调查` → total=195 [score=0.834 recalls=0 avg=0.620 source=memory/2026-07-06.md:48-51]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-06.md:52:55 -->
-- 执行 (AGENTS.md 铁律 4 步全走): ✓ `?keyword=智能` → 43 条匹配; ✓ `?page=2&page_size=10` → 分页 has_more 正确; ✓ `/ccgp-intent` HTML → HTTP 200, 45K, 12ms; ✓ 容器 hot-deploy: 3 文件 md5 本地=容器, 刷新即用 [score=0.834 recalls=0 avg=0.620 source=memory/2026-07-06.md:52-55]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-06.md:47:47 -->
-- 执行 (AGENTS.md 铁律 4 步全走): **验证** (端到端 7/7 通过) [score=0.824 recalls=0 avg=0.620 source=memory/2026-07-06.md:47-47]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-07.md:36:38 -->
-- 9:42 用户 "检查触发失败的原因" — 诊断 5 root cause: `41915c0` (chore p3 季度清理) 误删 import，但留下 line 238 调用 — pyflakes/ruff 应该报错但没报; 6-27 → 7-7 期间 cqggzy 列表采集 = 几乎全 0 (KeywordsService bug 持续 10 天); Bug #4 真实根因: `_get_conn()` 是 thread-local 缓存，失败后 conn 遗留 aborted state [score=0.819 recalls=0 avg=0.620 source=memory/2026-07-07.md:36-38]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-07.md:43:45 -->
-- 修复执行: **修 #1**: `cqggzy.py` 加 `from app.services.keywords_service import KeywordsService`; **修 #3**: migration 007 (`ALTER TABLE favorites ADD COLUMN deadline TEXT`); **修 #4**: `db.py` `_get_conn()` 入口加 `conn.rollback()` 清理状态 + try/finally + `pool.putconn()` [score=0.819 recalls=0 avg=0.620 source=memory/2026-07-07.md:43-45]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-07.md:48:51 -->
-- 验证结果: 11:58 手动触发: **620 条 / 255 匹配** (vs 之前 1/0) ✓; 12:00 cron 触发: **621 条 / 257 匹配** ✓; 12:13 完成 summary: 621/257，详情提取全部成功 ✓; watchdog 静默期: log 显示 `quiet hours (20:00-8:00), skip stale alert` ✓ [score=0.819 recalls=0 avg=0.620 source=memory/2026-07-07.md:48-51]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-07.md:53:53 -->
-- 验证结果: → **PR #77** 创建 (fix/cqggzy-keywords-service-import-2026-07-07) [score=0.819 recalls=0 avg=0.620 source=memory/2026-07-07.md:53-53]
-
-## Promoted From Short-Term Memory (2026-07-14)
-
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:12:12 -->
-- 修复前快照 (cron.get 2026-07-11 17:49): **daily-summary-21:00** (`2005eeb0-d865-40aa-b151-a298f1db3380`) [score=0.815 recalls=0 avg=0.620 source=memory/2026-07-11.md:12-12]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:19:19 -->
-- 修复前快照 (cron.get 2026-07-11 17:49): **中午汇报 - 采集关键项目** (`12eb4804-6cfb-42e7-8a94-eca22225c5a1`) [score=0.815 recalls=0 avg=0.620 source=memory/2026-07-11.md:19-19]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:24:24 -->
-- 修复前快照 (cron.get 2026-07-11 17:49): 7-10 12:00 run: M3 + M2.7 双 overload, 217s, error "All models failed" [score=0.815 recalls=0 avg=0.620 source=memory/2026-07-11.md:24-24]
-
-## Promoted From Short-Term Memory (2026-07-15)
-
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:13:16 -->
-- 修复前快照 (cron.get 2026-07-11 17:49): model: `minimax/MiniMax-M3`; fallbacks: **未配置** ❌; thinking: "off"; timeoutSeconds: 1800 [score=0.821 recalls=0 avg=0.620 source=memory/2026-07-11.md:13-16]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:17:17 -->
-- 修复前快照 (cron.get 2026-07-11 17:49): 7-10 21:00 run: qwen3.5-397b/nvidia, 153s, error "Agent couldn't generate" [score=0.821 recalls=0 avg=0.620 source=memory/2026-07-11.md:17-17]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:20:23 -->
-- 修复前快照 (cron.get 2026-07-11 17:49): model: `minimax/MiniMax-M3`; fallbacks: `["minimax/MiniMax-M2.7", "minimax/MiniMax-M3"]` ❌ 全 minimax; thinking: "minimal" ⚠️ 历史已知不兼容 M3; timeoutSeconds: 1500 [score=0.821 recalls=0 avg=0.620 source=memory/2026-07-11.md:20-23]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:29:31 -->
-- 修复计划 (方案 B — 加 qwen 122b fallback): qwen3.5-122b-a10b 是 NVIDIA 上更稳定的小模型 (历史 AGENTS.md 6-3 记录); 加到 fallback 链第 3 位，minimax 全 fail 时退到 qwen 122b; 修 thinking "minimal" → "off" (避免 M3 兼容性问题) [score=0.821 recalls=0 avg=0.620 source=memory/2026-07-11.md:29-31]
-<!-- openclaw-memory-promotion:memory:memory/2026-07-11.md:6:8 -->
-- 背景: 7-10 21:00 daily-summary-21:00 失败 (qwen3.5-397b 过载); 7-10 12:00 中午汇报失败 (minimax M3+M2.7 双 overload); 用户 23:15 问"检查失败的原因" → 我报告 → 用户 17:49 答"继续" [score=0.821 recalls=0 avg=0.620 source=memory/2026-07-11.md:6-8]
-
----
-
 ## 2026-07-16 00:09 — ABC 三件事收尾 + M2.7 context 留档
 
 - **A (修 3845a680 晚间汇报)** ✅ 完成
@@ -208,3 +165,20 @@ python3 scripts/backfill_project_types.py  # 全量 ~30-60s
   - 错误尝试: `--fallbacks '["minimax/MiniMax-M2.7","minimax/MiniMax-M3"]'` → 解析成 `['["minimax/MiniMax-M2.7"', '"minimax/MiniMax-M3"]']` (string-of-list)
   - 正确: `--fallbacks 'minimax/MiniMax-M2.7,minimax/MiniMax-M3'` → 解析成 `['minimax/MiniMax-M2.7', 'minimax/MiniMax-M3']`
   - 回退: `--clear-fallbacks` 可清掉错误状态
+
+## Promoted From Short-Term Memory (2026-07-19)
+
+<!-- openclaw-memory-promotion:memory:memory/2026-07-15.md:4:6 -->
+- 19:59 — Context window 修正 (user 直告): minimax/M3 + M2.7 context 实际 **> 205k**，`session_status` 的 205k 是 runtime 显示上限非硬限; AGENTS.md 6-3 旧 "50% compact" 规则废，已替换为新阈值 (used > 85% 才 compact); 教训: 模型能力数据要查 runtime/docs/问 user，**不可脑补** [score=0.818 recalls=0 avg=0.620 source=memory/2026-07-15.md:4-6]
+<!-- openclaw-memory-promotion:memory:memory/2026-07-14.md:6:7 -->
+- 背景: 用户 9:11 「先A后B」 → 9:13 「查询上下文并执行修复」 → 9:17 选 A (全做: 验证 + squash merge 3 PR + docker restart + smoke); 发现 7-7 创建的 3 OPEN PR 卡 7 天：#76 (cqyc router)、#77 (3 trigger fix)、#78 (cqyc 分类) [score=0.803 recalls=0 avg=0.620 source=memory/2026-07-14.md:6-7]
+<!-- openclaw-memory-promotion:memory:memory/2026-07-14.md:10:13 -->
+- 拓扑核查: 本地 main = `b650c02` (4-24, 2.5 月陈旧); origin/main = `9214edf` (含 PR #72~75); 实际本地 main 同步 fetch 后也是 `9214edf`（之前 git rev-parse 输出错位）; 容器代码 = 7-7 PR 内容（已 hot-deploy 过），但 main 落后于容器 [score=0.803 recalls=0 avg=0.620 source=memory/2026-07-14.md:10-13]
+<!-- openclaw-memory-promotion:memory:memory/2026-07-14.md:16:18 -->
+- Hot-deploy 真伪验证 (AGENTS 6-27 教训): `cqggzy.py:18` 含 `from app.services.keywords_service import KeywordsService` ✅; `routes/__init__.py:17,50` 含 `cqyc_router` 注册 ✅; `cqyc.py:78,80,83,88,106,116,117` 含全部 6 个新 keyword ✅ [score=0.803 recalls=0 avg=0.620 source=memory/2026-07-14.md:16-18]
+<!-- openclaw-memory-promotion:memory:memory/2026-07-14.md:21:22 -->
+- 备份 (AGENTS 6-7 铁律): `tag backup-main-pre-merge-2026-07-14-9214edf` → `9214edf`; `branch backup/main-pre-merge-2026-07-14-9214edf` → `9214edf` [score=0.803 recalls=0 avg=0.620 source=memory/2026-07-14.md:21-22]
+<!-- openclaw-memory-promotion:memory:memory/2026-07-14.md:25:28 -->
+- 执行 (AGENTS 6-7 铁律): | 顺序 | PR | commit | 风险 | 验证 | |---|---|---|---|---| | 1 | #77 3 trigger root cause | 228cf66 | 中 (db.py) | smoke ✓ | | 2 | #78 cqyc 6 keyword + 回填 | 30126eb | 低 | smoke ✓ | [score=0.803 recalls=0 avg=0.620 source=memory/2026-07-14.md:25-28]
+<!-- openclaw-memory-promotion:memory:memory/2026-07-14.md:29:29 -->
+- 执行 (AGENTS 6-7 铁律): | 3 | #76 cqyc router 注册 | b25ba9b | 极低 | smoke ✓ | [score=0.803 recalls=0 avg=0.620 source=memory/2026-07-14.md:29-29]
